@@ -7,3 +7,6 @@ __pycache__/
 .superpowers/
 *.pem
 *.key
+
+# Device-specific private snapshots and logs; never publish by default.
+/back/local/

@@ -19,3 +19,5 @@ Plan: docs/architecture/wheel-demo-v0.1.md; recovery supplement: docs/architectu
 - Final checks: 13/13 native behavior tests pass; generated partition/rollback/security-policy audit passes; original backup SHA-256 remains c8f796755d535f5eb5bdb820e3499595982c86fcfb986f1eb7ec6508f27d3e45.
 - Fresh independent review completed; all four P2 findings addressed (lock regeneration, trusted peer, transaction/digest/freshness checks, reproducible test setup). No deferred minor findings.
 - Remaining: LCD/UI, actual peripheral drivers, BLE endpoints and immutable deployed ABI, Wi-Fi provisioning, signed OTA transport/journal, boot confirmation and hardware validation. Paired OTA is unavailable in this build.
+
+- Hardware read-only checks: both boards identified, complete point-in-time flash snapshots verified; all observed differences confined to NVS. See [device report](2026-09-27-connected-devices.md). No custom firmware flashed.
