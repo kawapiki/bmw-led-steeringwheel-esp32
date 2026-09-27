@@ -4,7 +4,7 @@
 
 Build a two-device BMW E-series accessory: a vehicle gateway on a LILYGO ESP32 CAN board, and a responsive steering-wheel interface on the existing ESP32-S3 board. Initial vehicle: 2007 E90, N52B25, without iDrive.
 
-Current deliverables are role descriptions, architecture and interface proposals. There is no custom firmware implementation yet. See [architecture](docs/architecture/system-design.md), [contracts](docs/architecture/contracts.md) and the [agent roster](agents/README.md). These Markdown roles are repository instructions, not registered desktop agents or an automatic scheduler.
+Implementation has started with the wheel firmware build foundation. Track completed and pending milestones in docs/validation/implementation-progress.md; do not confuse a successful build with a complete demo or hardware validation. See [architecture](docs/architecture/system-design.md), [contracts](docs/architecture/contracts.md) and the [agent roster](agents/README.md). These Markdown roles are repository instructions, not registered desktop agents or an automatic scheduler.
 
 ## Constraints
 

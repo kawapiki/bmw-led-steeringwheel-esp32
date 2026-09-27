@@ -1,6 +1,6 @@
 # E90 LED/TFT steering wheel
 
-Hardware reference and original firmware backup for a Chinese aftermarket BMW E90 steering-wheel display board. Custom firmware development has not started.
+Hardware reference and original firmware backup for a Chinese aftermarket BMW E90 steering-wheel display board. Custom firmware development has started; the first build foundation is documented in [firmware/wheel](firmware/wheel/README.md). The complete demo and hardware validation are still pending.
 
 ## Development planning
 
