@@ -60,7 +60,7 @@ uint32_t rpm_mask(uint32_t rpm) {
   if (rpm <= 2000)
     return 0;
   unsigned pixels = rpm >= 6500 ? 23 : ((rpm - 2000) * 23u / 4500u);
-  return (1u << pixels) - 1u; /* Bit 23 belongs exclusively to button light. */
+  return (1u << pixels) - 1u; /* Logical RPM bits 0..22; the board maps them to physical pixels. */
 }
 
 int recovery_fragment(recovery_assembly_t *s, const uint8_t *p, size_t n,

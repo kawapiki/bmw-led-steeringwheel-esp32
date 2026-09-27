@@ -52,3 +52,12 @@ No timing distribution or high-load stability claim follows from these short cap
 - `.test-build/COM7-gateway-restart.log`: `b0907084de57769c7659803b79f0d2e620cc0e97ba345dc88c469fdceae96803`
 - `.test-build/COM6-wheel-restart.log`: `5782d04165332789b5dd0c90296e152c5a3bc7bc7f830c345a9166ec846d901f`
 - `.test-build/COM7-wheel-restart.log`: `f60201c91e2879a91ca143f571302e2f45d7c83a141abfb25d14ef48e675c79d`
+
+
+## Owner correction: button LED is first
+
+The owner corrected the physical order during bench testing: index0 on both chains illuminates the button, while indices1–23 form the RPM strip. Updated wheel_io applies that mapping to RPM and all diagnostic animation modes; the logical23-bit RPM mask is unchanged. README, architecture and peripheral-agent instructions now agree.
+
+The corrected wheel application built successfully (1,621,504 bytes), passed the target/partition/backup audit and was flashed at0x20000 only. NVS, pairing, partitions and gateway firmware were preserved. Write hash verification passed; the25-second post-flash capture showed app_main completion and resumed application-characteristic reads without panic/assert/abort. Physical appearance after correction still awaits owner confirmation.
+
+Corrected wheel SHA256: `e5fb47c611c05ac6a712dbbee6ca786591c16762a3ab249ce07caaec510dcded`. Local logs: `.test-build/wheel-led-order-flash.log`, `.test-build/COM6-led-order-boot.log`, `.test-build/COM7-led-order-boot.log`.

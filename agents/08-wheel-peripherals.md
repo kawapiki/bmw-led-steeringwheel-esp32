@@ -9,7 +9,7 @@ Provide nonblocking wheel peripherals independent of display rendering and radio
 ## Responsibilities
 
 - Own two WS2812 outputs, two local active-low buttons, vibration control and the firmware-indicated BNO055 I2C interface.
-- Owner reports that the last LED of each 24-pixel chain lights its button: reserve 23 pixels per chain for RPM and one for button illumination. Keep the two logical layers independent and verify physical mapping on hardware.
+- Owner reports that the first LED (index 0) of each 24-pixel chain lights its button; physical indices 1–23 are the RPM strip: reserve 23 pixels per chain for RPM and one for button illumination. Keep the two logical layers independent and verify physical mapping on hardware.
 - For the first demo, implement finite haptic feedback on debounced button presses and the behavior specified in `docs/architecture/wheel-demo-v0.1.md`.
 - Use hardware-timed LED output (RMT or another measured supported backend), bounded buffers and latest-pattern coalescing. Avoid interrupt-masking bit-banging. Confirm actual chain count/order/left-right mapping.
 - Debounce buttons and produce press/release/long-press events with timestamps. Define overflow/resynchronization; a dropped release must not leave a permanently pressed key.

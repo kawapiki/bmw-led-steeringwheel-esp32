@@ -6,7 +6,7 @@ Dátum: 2026-09-27. Állapot: első fejlesztési terv, még nincs lefordított v
 
 Önállóan futó ESP32-S3 kormánydemót készítünk, amely bemutatja a TFT-t és animációit, mindkét LED-láncot, két gombot, a haptikus visszajelzést és a rendelkezésre álló mozgásszenzort. Az első teljes demó része a telefonos Wi-Fi-beállítás, GitHub Releases frissítéskeresés, helyi megerősítés, tényleges OTA és hibás új verzió esetén visszaállás. A fordulatszám szimulált; ehhez nem kell autó vagy LILYGO.
 
-A felhasználó új hardveradata: **mindkét LED-lánc utolsó LED-je a hozzá tartozó gombot világítja meg**. A jelenlegi 24 elemű láncokból ezért 23–23 LED a fordulatszámcsík, 1–1 a külön gombvilágítás. Ez felhasználói információ, a fizikai sorrend tesztje még szükséges.
+A felhasználó új hardveradata: **mindkét LED-lánc első LED-je a hozzá tartozó gombot világítja meg**. A jelenlegi 24 elemű láncokból ezért 23–23 LED a fordulatszámcsík, 1–1 a külön gombvilágítás. Ez felhasználói információ, a fizikai sorrend tesztje még szükséges.
 
 Lehetséges megközelítések:
 
@@ -42,7 +42,7 @@ Debounce induló érték 15 ms, mintavétel 5 ms. A stabil lenyomásra azonnal h
 
 ## 3. LED- és szenzorbemutató
 
-Logikai pixelcsoportok: `rpm_left[23]`, `rpm_right[23]`, `button_k1`, `button_k2`. A fizikai lánc és irány boardprofilban van; a feltételezett utolsó pixel nullától számozva 23. Láncazonosító teszt igazolja, melyik GPIO melyik oldalt és gombot hajtja. A futófény és váltásjelzés kizárólag az RPM-csoportot írhatja.
+Logikai pixelcsoportok: `rpm_left[23]`, `rpm_right[23]`, `button_k1`, `button_k2`. A fizikai lánc és irány boardprofilban van; a felhasználó próbapadi pontosítása szerint a gomb LED-je a 0. fizikai pixel, az RPM-csoport az 1–23. fizikai pixel. Láncazonosító teszt igazolja, melyik GPIO melyik oldalt és gombot hajtja. A futófény és váltásjelzés kizárólag az RPM-csoportot írhatja.
 
 Demó alapértékek: 800–7000 RPM, 12 másodperces felfutás, 2 másodperces magas tartomány, 4 másodperces visszaesés. A LED-töltés 2000–6500 RPM között nő 0-ról 23 pixelre oldalanként, mindkét oldal kívülről befelé. Zöld → sárga → piros színmezők, tört pixelre fényerő-átmenet. 6500 RPM-től 4 Hz-es szinkron villogás, kikapcsolása 6350 alatt, hogy ne rezegjen a küszöb körül. Ezek szemléltető értékek, nem az N52 optimális váltási pontjának állításai. A valós határokat később a járműprofil adja.
 

@@ -87,7 +87,7 @@ class RecoveryTests(unittest.TestCase):
         g=valid_gate()
         for i in range(32):g.confirmed_digest[i]=g.requested_digest[i]=0
         self.assertFalse(lib.update_wheel_allowed(C.byref(g)))
-    def test_rpm_never_uses_button_pixel(self):
+    def test_rpm_mask_contains_23_logical_pixels(self):
         self.assertEqual(lib.rpm_mask(800),0)
         self.assertEqual(lib.rpm_mask(2000),0)
         self.assertEqual(lib.rpm_mask(6500),0x7fffff)

@@ -60,7 +60,7 @@ Close-up of the USB-C port, two white connectors, and nearby power components. C
 | Flash | Winbond, JEDEC EF4019, 32 MiB, 3.3 V |
 | Crystal | 40 MHz |
 | Display | ST7789/ST7789VW driver, 320 × 172 |
-| LEDs | Two WS2812 chains, 24 addressed LEDs per chain; the final LED of each chain lights a button (owner-reported), leaving 23 RPM LEDs per chain |
+| LEDs | Two WS2812 chains, 24 addressed LEDs per chain; the first LED (index 0) of each chain lights a button (owner-corrected during bench testing); indices 1–23 are RPM LEDs |
 | Motion-sensor interface | BNO055, I²C address 0x28, 400 kHz |
 | USB | Native USB Serial/JTAG |
 | Secure Boot / flash encryption | Both disabled at backup time |
