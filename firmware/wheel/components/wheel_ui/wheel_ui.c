@@ -9,8 +9,37 @@
 #include "wheel_core.h"
 #include <stdio.h>
 #include <string.h>
-static lv_obj_t *title, *body, *bar, *footer;
 static unsigned page;
+static lv_obj_t *title, *body, *bar, *footer, *wifi_qr, *qr_frame;
+static char qr_password[17];
+static bool qr_valid, qr_layout;
+static bool update_wifi_qr(const demo_state_t *s) {
+  if (!s->ap_password[0]) {
+    if (qr_password[0]) {
+      demo_clear(qr_password, sizeof(qr_password));
+      lv_canvas_fill_bg(wifi_qr, lv_color_white(), LV_OPA_COVER);
+      qr_valid = false;
+    }
+    return false;
+  }
+  if (page != 6 || s->offer || s->writing) return false;
+  if (strcmp(qr_password, s->ap_password) != 0) {
+    qr_valid = false;
+    /* AP passwords are 16 generated alphanumeric characters: no QR escaping
+       is required. Reject changed formats instead of encoding ambiguously. */
+    if (strlen(s->ap_password) == 16 &&
+        strspn(s->ap_password, "abcdefghijklmnopqrstuvwxyz23456789") == 16) {
+      char payload[80];
+      int n = snprintf(payload, sizeof(payload),
+                       "WIFI:T:WPA;S:BMW-Wheel;P:%s;;", s->ap_password);
+      qr_valid = n > 0 && n < sizeof(payload) &&
+                 lv_qrcode_update(wifi_qr, payload, n) == LV_RESULT_OK;
+      demo_clear(payload, sizeof(payload));
+    }
+    memcpy(qr_password, s->ap_password, sizeof(qr_password));
+  }
+  return qr_valid;
+}
 static uint64_t last_ui, opened;
 static bool armed;
 /* UI-owner measurements; no ISR work or per-frame serial logging. */
@@ -94,6 +123,22 @@ static void run(void *a) {
   footer = lv_label_create(screen);
   lv_obj_set_pos(footer, 12, 150);
   lv_label_set_text(footer, "K1 next   K2 action   hold K1 back");
+  /* Extra white surround guarantees >=4 modules even when LVGL's built-in
+     quiet-zone rounding supplies only two modules at the selected scale. */
+  qr_frame = lv_obj_create(screen);
+  lv_obj_remove_style_all(qr_frame);
+  lv_obj_set_pos(qr_frame, 0, 4);
+  lv_obj_set_size(qr_frame, 164, 164);
+  lv_obj_set_style_bg_color(qr_frame, lv_color_white(), 0);
+  lv_obj_set_style_bg_opa(qr_frame, LV_OPA_COVER, 0);
+  lv_obj_remove_flag(qr_frame, LV_OBJ_FLAG_SCROLLABLE);
+  wifi_qr = lv_qrcode_create(qr_frame);
+  lv_qrcode_set_size(wifi_qr, 148);
+  lv_qrcode_set_dark_color(wifi_qr, lv_color_black());
+  lv_qrcode_set_light_color(wifi_qr, lv_color_white());
+  lv_qrcode_set_quiet_zone(wifi_qr, true);
+  lv_obj_set_pos(wifi_qr, 8, 8);
+  lv_obj_add_flag(qr_frame, LV_OBJ_FLAG_HIDDEN);
   uint64_t drawn = 0;
   unsigned displayed_page = 10;
   uint32_t offer_seen = 0;
@@ -139,6 +184,23 @@ static void run(void *a) {
     }
     if (page == 6 && s.offer && !s.pressed[1] && demo_ms() > opened + 50)
       armed = true;
+    bool show_qr = update_wifi_qr(&s);
+    if (show_qr != qr_layout) {
+      qr_layout = show_qr;
+      lv_anim_delete(body, slide);
+      lv_obj_set_pos(title, show_qr ? 164 : 12, 8);
+      lv_obj_set_pos(body, show_qr ? 164 : 12, 40);
+      lv_obj_set_width(body, show_qr ? 148 : 296);
+      lv_obj_set_style_max_height(body, show_qr ? 124 : 102, 0);
+      if (show_qr) {
+        lv_obj_remove_flag(qr_frame, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(footer, LV_OBJ_FLAG_HIDDEN);
+      } else {
+        lv_obj_add_flag(qr_frame, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_remove_flag(footer, LV_OBJ_FLAG_HIDDEN);
+      }
+      drawn = 0;
+    }
     if (displayed_page != page) {
       lv_label_set_text(title, names[page]);
       lv_obj_set_style_opa(bar, page == 0 ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
@@ -206,6 +268,11 @@ static void run(void *a) {
                  (unsigned long)esp_get_minimum_free_heap_size());
         break;
       case 6:
+        if (show_qr) {
+          snprintf(text, sizeof(text),
+                   "BMW-Wheel\nScan to connect\nThen open:\n192.168.4.1");
+          break;
+        }
         snprintf(text, sizeof(text), "%s\n%.74s\n%u%% / installed %lu\n%s",
                  s.network, s.update, s.progress,
                  (unsigned long)s.installed_release,

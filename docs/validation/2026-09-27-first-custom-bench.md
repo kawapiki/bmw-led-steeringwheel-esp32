@@ -98,3 +98,12 @@ Both diagnostic and corrected applications built and flashed with verified hashe
 Local capture hashes:
 - `.test-build/ui-profile-before.log`: `43c79d0929d27b53ee6b9a58b9c46e49fccad113a355e0ff80f6e564867928b3`
 - `.test-build/ui-profile-after.log`: `7ffe5bf4bae8eb64a1e9c5d2578a7d9a08865e0c877dce755ac2dd42caf593db`
+
+
+## QR provisioning and additional owner observations
+
+Owner reported the optimized Performance page showing5000–6000us UI period. Motion-sensor values change when the wheel moves; axis accuracy/calibration remain unqualified. The original AP password was visible, but lengthy to type; owner requested Wi-Fi QR joining.
+
+Added the LVGL9.4 QR component to wheel only. Active provisioning on Update shows the current AP SSID/password in Wi-Fi QR syntax, plus the manual portal address. UI-owned reusable148px I1 canvas,164px white outer frame, at least four quiet modules; no per-frame QR generation. The password cache and rendered QR are cleared when the AP password clears. No credentials logged. Current generated password alphabet is validated; unsupported formats retain manual entry instead of ambiguous QR data.
+
+Build and target/partition/backup audit passed. C QR encoder round-trip host test passed four sample password cases through zxing-cpp at the actual164px frame size. Only wheel app was written, hash verified; provisioning NVS and gateway unchanged. Physical phone-camera scan and Wi-Fi join await owner confirmation; neither Android nor iPhone is declared validated yet.
