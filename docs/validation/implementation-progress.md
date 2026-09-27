@@ -35,3 +35,8 @@ Review [candidate wire contract](../architecture/recovery-wire-candidate.md), [i
 ## Review round1 source corrections
 
 Interrupted-update retry, replay/session dispatch, both-role auth deadline, boot-task liveness, sensor configuration validity, telemetry age, OTA result UI and reproducible native setup are corrected and await scoped re-review.26 native tests and7 real-image release tests pass, including a new clean pinned toolchain directory. Final images: wheel1,621,520 bytes; gateway1,251,136 bytes. Both build/partition/security/identity audits and original backup hash pass. No hardware write or live OTA evidence. Wheel link-time free DIRAM164,230 bytes and gateway free DRAM73,589 bytes remain pre-runtime figures. Flat diagnostic navigation, tilt graphic and fractional LED refinement are visual follow-ups; all physical acceptance remains pending.
+
+
+## First authorized physical bench session
+
+Source re-review of8c5fcde resolved all eight Important findings. User authorized real testing and confirmed USB-only, vehicle-disconnected setup. Both targets were flashed with hash-verified initial write sets. Both booted and authenticated BLE; one gateway-only and one wheel-only restart each recovered automatically. Three45-second capture windows recorded no panic/assert or unexpected reset. Display/peripheral observation, runtime resource/timing measurements, phone provisioning and actual OTA remain pending. See [physical bench report](2026-09-27-first-custom-bench.md). Earlier no-flash statements describe previous milestones.

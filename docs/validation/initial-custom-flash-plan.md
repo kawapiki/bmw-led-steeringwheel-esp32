@@ -1,12 +1,12 @@
-# Initial custom installation and restoration — review only
+# Initial custom installation and restoration
 
-No command in this plan has been executed. Ordinary build authorization does not authorize this hardware action. Both devices' firmware/partition layouts change. Keep the car CAN wiring disconnected; these images do not initialize CAN.
+The initial write set below was executed after explicit user authorization for real bench tests; see [bench report](2026-09-27-first-custom-bench.md). Restoration has NOT been executed. Ordinary build authorization alone does not authorize hardware writes. Both devices' firmware/partition layouts change. Keep the car CAN wiring disconnected; these images do not initialize CAN.
 
 ## Artifacts and private provisioning
 
 Run tools/provision-development.py with the ESP-IDF Python environment once. Preserve .private/release-signing.pem securely for all future releases. Never publish .private, initial-nvs.csv/bin, pair_config.h or back/local. Generic OTA images contain public verification key only; the per-pair passkey is in the initial NVS image shared by these two devices. Do not recreate NVS on normal OTA.
 
-Generate private initial NVS using IDF nvs_partition_gen.py generate .private/initial-nvs.csv .private/initial-nvs.bin 0x6000. The local private image has already been generated for review, not written to a device.
+Generate private initial NVS using IDF nvs_partition_gen.py generate .private/initial-nvs.csv .private/initial-nvs.bin 0x6000. The local private image was generated and used for this pair during the authorized first installation.
 
 Before approval: run tools/check-system-build.py; verify exact device identity/port again (last observed wheel COM6 ESP32-S3, gateway COM7 ESP32 rev3.1). COM numbering is not identity. COM6 may require physical reconnect after reset. Confirm power, panel orientation/offset assumptions and preserve full backups.
 
