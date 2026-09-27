@@ -1,58 +1,21 @@
-# Wheel firmware foundation (M1)
+# Wheel demo firmware
 
-This is a buildable bring-up foundation, **not the complete v0.1 demo**.
-It initializes the motor control to OFF and emits synthetic RPM/heap logs on native USB.
-No LCD, LEDs, buttons, motion sensor, BLE service, provisioning or OTA transport is active yet.
+Build target ESP32-S3, ESP-IDF6.1, LVGL9.4.0, led_strip3.0.3 and cJSON1.7.19. The firmware now implements the LCD port, animated two-button menu, simulated RPM, LED diagnostics, finite haptics, optional BNO055, authenticated BLE, phone Wi-Fi setup and authenticated paired/standalone OTA. It has not been flashed or runtime-qualified.
 
-The shared C component contains a bounded recovery-envelope/credential validator,
-a transaction-bound gateway-first update eligibility predicate and an RPM mask that excludes pixel 23.
-The validator is not a complete authentication implementation: the future BLE adapter must
-supply verified authorized-peer identity, encryption and bonding state, and enforce session/transaction
-freshness before calling command handlers. The update predicate is not a transaction journal.
-Do not connect these helpers directly to flash/actuator operations.
+From repository root:
+1. Run ESP-IDF Python on tools/provision-development.py to create private local signing material and initial pairing-NVS source.
+2. Run tools/build-wheel.ps1; gateway uses tools/build-gateway.ps1.
+3. Run tools/check-system-build.py, tests/host/test_core.py and tests/host/test_release.py.
+4. Review docs/validation/initial-custom-flash-plan.md before any hardware action.
 
-## Build
+K1 short cycles pages; K2 activates page action; K1 hold returns home/cancels; K2 hold confirms a newly offered update after button release. LED page K2 cycles RPM, first chain, second chain, chasing pixel and red test. Buttons page K2 requests bounded haptic. Update mode page explicitly selects paired(default) or standalone. Update page K2 opens service AP or checks Releases. After successful Wi-Fi provisioning the worker starts a release check.
 
-Use ESP-IDF **v6.1** and the committed component lock. On this Windows workstation:
+Phone connects to BMW-Wheel using the random password shown on TFT, then opens http://192.168.4.1. Scan lists up to12 networks; enter SSID/password manually, including hidden SSIDs. The portal is bound logically to the AP destination, protected by the AP WPA2 password and request token, and expires after5 minutes. Credentials persist only after confirmed association/IP and can be forgotten from the portal.
 
-```powershell
-.\tools\build-wheel.ps1
-```
+UI is single-owner core1, partial RGB565 double DMA buffers(30KiB), LVGL16ms refresh target,32KiB LVGL heap. No claim of measured FPS. RMT allocation: motor48-symbol hardware pulse; first LED chain DMA on S3's only DMA-capable TX channel; second chain96-symbol non-DMA channel. Initial LED limit10%. IO quiesces before OTA flash operations. Display offsets and orientation remain firmware-derived candidates in board header.
 
-Or activate your own v6.1 installation and run:
+Normal wheel demo does not consume CAN frames. BLE application telemetry is explicitly synthetic gateway data. Recovery is separate and remains available when application-major compatibility fails.
 
-```text
-idf.py -C firmware/wheel build
-```
+OTA assets are release-tag system-rN with signed manifest.bin and target wheel.bin/gateway.bin. tools/release/package.py validates chip/project, hashes exact images and signs the common envelope. Public verification key is compiled in; pairing secret is only in private provisioned NVS. Never publish private provisioning images or signing keys.
 
-The wrapper accepts -IdfPath and -IdfToolsPath. Its default Python environment matches
-the installation used here; other installations should activate IDF themselves.
-
-Build products remain ignored in firmware/wheel/build. Two 6 MiB application slots
-and rollback support are configured. This image is not a release or a safe initial-flash
-package: board checks, signing, first-boot confirmation and recovery procedures are still
-required. Do not infer permission to flash from a successful build. PSRAM is intentionally
-disabled pending board-mode verification; the original backup is unchanged.
-
-## Native behavior tests
-
-Install a project-local development compiler (Windows x64):
-
-```text
-python -m pip install --target .test-build/zig ziglang==0.14.1
-python tests/host/test_core.py
-```
-
-HOST_CC may point to a compatible Zig executable. Tests compile and load the production C
-as a host DLL and exercise real functions; no radio or device is accessed.
-Firmware compilation and native tests do not establish hardware correctness.
-
-## Next milestones
-
-- M2: LCD/DMA and LVGL UI on CPU1.
-- M3/M4: buttons, RMT LEDs, bounded haptics, sensor and animated menus.
-- M5/M6: phone provisioning, signed GitHub OTA and boot confirmation.
-- Paired OTA additionally needs the permanent authenticated recovery BLE service,
-  gateway implementation, transaction journal and mixed-version recovery tests.
-
-See ../../docs/architecture/wheel-demo-v0.1.md and ../../docs/architecture/ota-recovery-v1.md.
+Hardware acceptance remains: LCD orientation/color, button polarity, motor direction/driver, LED physical order, sensor identity, pairing/reconnect, phone browsers, OTA/rollback power-fault tests, heap/latency/endurance.

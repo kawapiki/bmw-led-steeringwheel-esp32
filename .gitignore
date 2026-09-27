@@ -10,3 +10,5 @@ __pycache__/
 
 # Device-specific private snapshots and logs; never publish by default.
 /back/local/
+
+.private/

@@ -21,3 +21,13 @@ Plan: docs/architecture/wheel-demo-v0.1.md; recovery supplement: docs/architectu
 - Remaining: LCD/UI, actual peripheral drivers, BLE endpoints and immutable deployed ABI, Wi-Fi provisioning, signed OTA transport/journal, boot confirmation and hardware validation. Paired OTA is unavailable in this build.
 
 - Hardware read-only checks: both boards identified, complete point-in-time flash snapshots verified; all observed differences confined to NVS. See [device report](2026-09-27-connected-devices.md). No custom firmware flashed.
+
+## Two-device demo implementation,2026-09-27
+
+Both custom applications now compile on ESP-IDF6.1. Wheel LCD/LVGL, buttons/hardware-bounded haptics, dual LED chains, optional BNO055, independent BLE application/recovery channels, Wi-Fi phone portal and signed-manifest paired/standalone OTA are implemented. Gateway CAN remains disabled. Source is awaiting independent review and hardware qualification; no custom image was flashed.
+
+Final builds: wheel1,613,040 bytes in6MiB slot, gateway1,243,808 bytes in0x1e0000-byte slot.18 shared native-C tests and6 release-authenticity/target tests pass. Both-target partition/security/chip audit and immutable backup SHA pass. These are build/host results, not successful physical OTA or performance evidence.
+
+Link-time free DIRAM164,774 bytes on wheel and free DRAM74,101 bytes on gateway are not runtime heap guarantees. PSRAM remains disabled; first boot must measure largest free block, stack margins, TLS coexistence and failure behavior.
+
+Review [candidate wire contract](../architecture/recovery-wire-candidate.md), [initial flash/restore plan](initial-custom-flash-plan.md), and target READMEs. Hardware acceptance M2–M7 remains pending for actual displays, peripherals, pairing/reconnect, phone provisioning, OTA rollback/fault injection and endurance.

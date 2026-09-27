@@ -93,5 +93,53 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(lib.rpm_mask(6500),0x7fffff)
         self.assertEqual(lib.rpm_mask(999999),0x7fffff)
 
+
+class Assembly(C.Structure):
+    _fields_=[("data",C.c_uint8*152),("size",C.c_size_t),("expected",C.c_size_t),("started",C.c_uint64)]
+lib.recovery_fragment.argtypes=[C.POINTER(Assembly),C.c_void_p,C.c_size_t,C.c_uint64]
+lib.recovery_fragment.restype=C.c_int
+lib.manifest_layout_valid.argtypes=[C.c_void_p,C.c_size_t]
+lib.manifest_layout_valid.restype=C.c_bool
+class TransportTests(unittest.TestCase):
+    def test_mtu23_complete_152_bytes(self):
+        state=Assembly();data=bytes(range(152))
+        for off in range(0,152,18):
+            frame=bytes([off,152])+data[off:off+18]
+            result=lib.recovery_fragment(C.byref(state),frame,len(frame),10+off)
+            self.assertEqual(result,1 if off+18>=152 else 0)
+        self.assertEqual(bytes(state.data),data)
+    def test_fragment_overflow_and_timeout(self):
+        state=Assembly();first=b'\x00\x18'+bytes(18)
+        self.assertEqual(lib.recovery_fragment(C.byref(state),first,len(first),10),0)
+        final=b'\x12\x18'+bytes(6)
+        self.assertEqual(lib.recovery_fragment(C.byref(state),final,len(final),3011),-1)
+        self.assertEqual(state.size,0)
+        for frame in (b'',b'\x00\xffx',b'\x17\x18xx',bytes(21)):
+            self.assertEqual(lib.recovery_fragment(C.byref(state),frame,len(frame),0),-1)
+    def test_out_of_order_fragment_zeroizes(self):
+        state=Assembly();first=b'\x00\x18'+bytes([42])*18
+        lib.recovery_fragment(C.byref(state),first,len(first),1)
+        bad=b'\x11\x18'+bytes(6)
+        self.assertEqual(lib.recovery_fragment(C.byref(state),bad,len(bad),2),-1)
+        self.assertEqual(bytes(state.data),bytes(152))
+    def test_manifest_layout_rejects_targets_and_sizes(self):
+        import struct
+        data=bytearray(struct.pack('<4sIII',b'BMW1',2,1000,1000)+bytes([1])*64+struct.pack('<IIII',1,1,1,1)+bytes(384))
+        self.assertTrue(lib.manifest_layout_valid(bytes(data),len(data)))
+        for off,value in ((4,0),(8,0x600001),(12,0x1e0001),(80,2)):
+            altered=data[:];struct.pack_into('<I',altered,off,value)
+            self.assertFalse(lib.manifest_layout_valid(bytes(altered),len(altered)))
+        self.assertFalse(lib.manifest_layout_valid(bytes(data),479))
+        future=data[:];struct.pack_into("<I",future,92,2)
+        self.assertTrue(lib.manifest_layout_valid(bytes(future),480))
+        struct.pack_into("<I",future,88,2)
+        self.assertFalse(lib.manifest_layout_valid(bytes(future),480))
+    def test_prepare_size_and_embedded_nul(self):
+        header=bytearray.fromhex('e99001040000000001000000020000000300000000000000')
+        self.assertLess(lib.recovery_validate(bytes(header),24,True,True,True),0)
+        header[3]=3;header[4]=11
+        frame=bytes(header)+b'\x01\x08\x00password'
+        self.assertLess(lib.recovery_validate(frame,len(frame),True,True,True),0)
+
 if __name__=="__main__":
     unittest.main()

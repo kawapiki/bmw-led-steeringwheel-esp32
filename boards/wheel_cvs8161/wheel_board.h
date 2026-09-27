@@ -19,3 +19,9 @@
 #define WHEEL_CHAIN_PIXELS 24
 #define WHEEL_RPM_PIXELS 23
 #define WHEEL_BUTTON_PIXEL 23
+
+#define WHEEL_LCD_GAP_X 0
+#define WHEEL_LCD_GAP_Y 34
+#define WHEEL_LCD_SWAP_XY true
+#define WHEEL_LCD_MIRROR_X true
+#define WHEEL_LCD_MIRROR_Y false
