@@ -24,3 +24,20 @@
 - Rollback/fault injection and mixed-application-version recovery remain unqualified until explicitly exercised and recorded.
 
 Private raw bench logs remain ignored under `.test-build`; never commit credentials, NVS dumps or signing private keys.
+
+## Corrected baseline and r2
+
+- Commit `aaae163` fixes HTTP TX capacity and adds non-sensitive update/boot diagnostics.
+- Commit `d72f5a0` integrates the separately reviewed complete-frame LED DMA transport; see the LED investigation report for evidence and limitations.
+- Wheel and gateway builds succeed, image sizes 1,641,600 and 1,262,992 bytes respectively; target/partition/original-backup audits and signed-release tests pass.
+- USB wrote only each application at0x20000, with esptool hash verification; NVS, bonds, partition tables and rollback metadata were retained. Wheel was explicitly reset once afterward. This is bootstrap, not OTA.
+- Corrected wheel boot log: `boot self-test passed; slot=ota_0 address=0x20000`. Gateway log confirms authenticated recovery connection after both applications restart.
+- Published signed `system-r2` from `d72f5a0`, pushed branch updates, and verified public downloads of all three binary assets against local SHA-256.
+- User asked to initiate the r2 paired update via the physical menu while both private serial logs are captured. Live installation outcome is pending.
+
+## Populated release-list memory bound
+
+- Live r2 discovery failed before download with `Release response: no memory`; user confirmed the same message. No OTA partition switch occurred.
+- With two release objects, the full response plus TLS working memory exceeded the available allocation budget. Changed listing pagination from five objects/page to one, preserving the60-release search window, and changed unknown-length growth from doubling to1024-byte increments. The24KiB hard response bound remains.
+- Both rebuilds and image audits pass; the actual bounded-reader regression scenarios pass. Only wheel needs the additional USB bootstrap because the gateway does not enumerate releases.
+- User's first physical LED observation with complete-frame DMA: no unexpected flicker so far. This is an initial observation, not endurance or electrical validation.

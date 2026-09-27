@@ -187,7 +187,7 @@ static int fetch_listing(const char *url, char **out) {
         break;
       }
       if (needed > capacity) {
-        size_t next = capacity * 2;
+        size_t next = capacity + 1024;
         if (next < needed) next = needed;
         if (next > limit) next = limit;
         char *grown = realloc(data, next + 1);
@@ -527,11 +527,13 @@ static void search(void) {
   uint32_t releases[60];
   size_t release_count = 0;
   char *json = NULL;
-  for (int page = 1; page <= 12; page++) {
+  /* Release objects include all assets/body; one per page bounds peak RAM.
+   * Preserve the 60-release search window without retaining JSON across TLS. */
+  for (int page = 1; page <= 60; page++) {
     char url[160];
     snprintf(url, sizeof(url),
              "https://api.github.com/repos/kawapiki/"
-             "bmw-led-steeringwheel-esp32/releases?per_page=5&page=%d",
+             "bmw-led-steeringwheel-esp32/releases?per_page=1&page=%d",
              page);
     int n = fetch_listing(url, &json);
     if (n < 0) {
@@ -569,7 +571,7 @@ static void search(void) {
     cJSON_Delete(list);
     free(json);
     json = NULL;
-    if (page_count < 5)
+    if (page_count < 1)
       break;
   }
 
