@@ -116,3 +116,14 @@ The owner confirmed that scanning the displayed QR successfully joined BMW-Wheel
 Root cause established against the configured IDF/lwIP sources: CONFIG_LWIP_IPV6=y makes esp_http_server listen on PF_INET6. lwip_getaddrname maps an IPv4 local address on that socket to IPv4-mapped IPv6. The portal guard allocated only sockaddr_in and interpreted the truncated sockaddr_in6 prefix as an IPv4 address, rejecting a legitimate AP request.
 
 The guard now uses sockaddr_storage, checks returned family/length and accepts only192.168.4.1 or its exact ::ffff:192.168.4.1 representation. Active-AP/deadline checks and request-token authorization remain. A production-used portable predicate has regression cases for both accepted forms, foreign addresses, IPv4-compatible-but-not-mapped IPv6, null and truncated input.27 native tests pass; both target builds and build/backup audit pass. Only the wheel app is reflashed; the updated gateway artifact is built but not installed because its phone portal is not in use. Actual post-fix phone HTTP access remains pending owner retest.
+
+
+## Wi-Fi scan interaction correction
+
+Owner confirmed the portal now opens after the AP socket fix, but Scan did not produce a usable result. Code inspection identified that /scan queued a job while returning an old text snapshot, required another manual request to retrieve results and shared its output DOM element with a2-second status poll. Wi-Fi driver errors were not surfaced.
+
+Scan now separates start from polling: authenticated /scan?start=1 queues once and publishes running state; /scan reads a bounded12-network snapshot without starting another scan. Completion/error is explicit JSON; cJSON escapes SSID text. The portal polls until done, presents selectable SSIDs/RSSI and unsupported-security hints, and keeps connection status separate. It retains manual hidden-SSID entry, request token and per-request IDs. Failed or empty scans show actionable state instead of stale data. HTML moved into an embedded file; token is inserted at response time, not a static secret.
+
+Three Node tests run actual embedded-page JavaScript with a minimal DOM/fetch harness: delayed results with one scan request and selection, status polling preserving scan output, scan failure/retry, and empty-result state. They pass. These do not prove real RF scan success or phone browser behavior. Both final firmware builds and target/partition/backup audit pass. Updated wheel app is flashed with hash verification; gateway artifact builds but gateway is not reflashed. Physical rescan remains pending owner confirmation.
+
+Added the requested reusable10 Automotive UI designer role: synthwave visual direction, native320x172 designs, two-button state flows, LVGL handoff and measured performance acceptance. It is a repository role brief, not a running/background agent or a completed visual redesign.

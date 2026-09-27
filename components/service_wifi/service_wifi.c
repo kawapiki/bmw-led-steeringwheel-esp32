@@ -1,5 +1,6 @@
 #include "service_wifi.h"
 #include "demo.h"
+#include "cJSON.h"
 #include "esp_event.h"
 #include "esp_http_server.h"
 #include "esp_mac.h"
@@ -116,43 +117,22 @@ static esp_err_t page(httpd_req_t *r) {
   portENTER_CRITICAL(&lock);
   memcpy(page_token, visible.token, 33);
   portEXIT_CRITICAL(&lock);
-  char html[3000];
-  snprintf(
-      html, sizeof(html),
-      "<!doctype html><meta name=viewport "
-      "content='width=device-width'><title>BMW wheel Wi-Fi</title><h2>Wheel "
-      "service</h2><p>Credentials stay on your paired devices.</p><form "
-      "id=f><label>Network <input id=s maxlength=32 "
-      "required></label><p><label>Password <input id=p type=password "
-      "minlength=8 maxlength=63 "
-      "required></label><p><button>Connect</button></form><button "
-      "id=b>Scan</button><button id=q>Forget saved network</button><pre "
-      "id=o></pre><script>const t='%s';let "
-      "rid=Date.now()>>>0;setInterval(async()=>{try{o.textContent=await(await "
-      "fetch('/"
-      "status',{headers:{'X-Service-Token':t}})).text()}catch{}},2000);f."
-      "onsubmit=async "
-      "e=>{e.preventDefault();const a=new TextEncoder().encode(s.value),c=new "
-      "TextEncoder().encode(p.value);if(a.length>32||c.length>63)return;const "
-      "d=new "
-      "Uint8Array(2+a.length+c.length);d[0]=a.length;d[1]=c.length;d.set(a,2);"
-      "d.set(c,2+a.length);o.textContent=await(await "
-      "fetch('/"
-      "configure',{method:'POST',headers:{'X-Service-Token':t,'X-Request-ID':"
-      "String(++rid)},body:d})).text()"
-      ";p.value='';};b.onclick=async()=>{o.textContent=await(await "
-      "fetch('/"
-      "scan',{headers:{'X-Service-Token':t}})).text();};q.onclick=async()=>{o."
-      "textContent=await(await "
-      "fetch('/"
-      "forget',{method:'POST',headers:{'X-Service-Token':t}})).text();};</"
-      "script>",
-      page_token);
-  demo_clear(page_token, sizeof(page_token));
-  httpd_resp_set_type(r, "text/html");
+  extern const char provision_start[] asm("_binary_provision_html_start");
+  const char *slot = strstr(provision_start, "{{TOKEN}}");
+  if (!slot) {
+    demo_clear(page_token, sizeof(page_token));
+    return httpd_resp_send_err(r, HTTPD_500_INTERNAL_SERVER_ERROR, "Page unavailable");
+  }
+  httpd_resp_set_type(r, "text/html; charset=utf-8");
   httpd_resp_set_hdr(r, "Cache-Control", "no-store");
-  return httpd_resp_sendstr(r, html);
+  esp_err_t result = httpd_resp_send_chunk(r, provision_start, slot-provision_start);
+  if (result == ESP_OK) result = httpd_resp_send_chunk(r, page_token, 32);
+  demo_clear(page_token, sizeof(page_token));
+  if (result == ESP_OK) result = httpd_resp_sendstr_chunk(r, slot+9);
+  if (result == ESP_OK) result = httpd_resp_send_chunk(r, NULL, 0);
+  return result;
 }
+
 static bool auth(httpd_req_t *r) {
   char t[40], expected[33];
   portENTER_CRITICAL(&lock);
@@ -223,18 +203,58 @@ static esp_err_t configure(httpd_req_t *r) {
                             ok ? "Connecting. Check wheel display." : "Busy");
 }
 static bool scan_requested, forget_requested;
-static char scan_result[1024] = "Press scan, wait, then scan again.";
+typedef struct {
+  unsigned state; /* 0 idle, 1 queued/running, 2 complete, 3 error */
+  esp_err_t error;
+  uint16_t count;
+  wifi_ap_record_t records[12];
+} scan_snapshot_t;
+static scan_snapshot_t scan_view;
 static esp_err_t scan(httpd_req_t *r) {
   if (!auth(r))
     return httpd_resp_send_err(r, HTTPD_403_FORBIDDEN, "Denied");
-  enqueue(SCAN);
-  char copy[1024];
+  char query[24] = {0};
+  bool start = httpd_req_get_url_query_str(r, query, sizeof(query)) == ESP_OK &&
+               !strcmp(query, "start=1");
+  if (start) {
+    bool launch;
+    portENTER_CRITICAL(&lock);
+    launch = scan_view.state != 1;
+    if (launch) { scan_view.state = 1; scan_view.count = 0; scan_view.error = ESP_OK; }
+    portEXIT_CRITICAL(&lock);
+    if (launch && !enqueue(SCAN)) {
+      portENTER_CRITICAL(&lock);
+      scan_view.state = 3; scan_view.error = ESP_ERR_NO_MEM;
+      portEXIT_CRITICAL(&lock);
+    }
+  }
+  scan_snapshot_t snapshot;
   portENTER_CRITICAL(&lock);
-  memcpy(copy, scan_result, sizeof(copy));
+  snapshot = scan_view;
   portEXIT_CRITICAL(&lock);
-  httpd_resp_set_type(r, "text/plain");
-  return httpd_resp_sendstr(r, copy);
+  cJSON *root = cJSON_CreateObject();
+  cJSON *list = root ? cJSON_AddArrayToObject(root, "networks") : NULL;
+  bool ok = root && list && cJSON_AddNumberToObject(root, "state", snapshot.state) &&
+            cJSON_AddStringToObject(root, "error", snapshot.error == ESP_OK ? "" : esp_err_to_name(snapshot.error));
+  for (unsigned i=0; ok && i<snapshot.count; i++) {
+    cJSON *item = cJSON_CreateObject();
+    if (!item) { ok=false; break; }
+    if (!cJSON_AddItemToArray(list,item)) { cJSON_Delete(item); ok=false; break; }
+    snapshot.records[i].ssid[32]=0;
+    ok = cJSON_AddStringToObject(item,"ssid",(char *)snapshot.records[i].ssid) &&
+         cJSON_AddNumberToObject(item,"rssi",snapshot.records[i].rssi) &&
+         cJSON_AddNumberToObject(item,"auth",snapshot.records[i].authmode);
+  }
+  char *json = ok ? cJSON_PrintUnformatted(root) : NULL;
+  cJSON_Delete(root);
+  if (!json) return httpd_resp_send_err(r, HTTPD_500_INTERNAL_SERVER_ERROR, "Scan response unavailable");
+  httpd_resp_set_type(r,"application/json");
+  httpd_resp_set_hdr(r,"Cache-Control","no-store");
+  esp_err_t result = httpd_resp_sendstr(r,json);
+  cJSON_free(json);
+  return result;
 }
+
 static esp_err_t forget(httpd_req_t *r) {
   if (!auth(r))
     return httpd_resp_send_err(r, HTTPD_403_FORBIDDEN, "Denied");
@@ -391,21 +411,19 @@ static void worker(void *a) {
     if (scan_requested) {
       scan_requested = false;
       wifi_scan_config_t cfg = {.show_hidden = true};
-      if (esp_wifi_scan_start(&cfg, true) == ESP_OK) {
-        uint16_t n = 12;
-        wifi_ap_record_t records[12];
-        char text[1024] = "";
-        esp_wifi_scan_get_ap_records(&n, records);
-        size_t pos = 0;
-        for (int i = 0; i < n && pos < 900; i++)
-          pos +=
-              snprintf(text + pos, sizeof(text) - pos, "%s (%d dBm, auth %u)\n",
-                       records[i].ssid, records[i].rssi, records[i].authmode);
-        portENTER_CRITICAL(&lock);
-        memcpy(scan_result, text, sizeof(text));
-        portEXIT_CRITICAL(&lock);
+      scan_snapshot_t result = {0};
+      result.error = attempt ? ESP_ERR_INVALID_STATE : esp_wifi_scan_start(&cfg, true);
+      if (result.error == ESP_OK) {
+        result.count = 12;
+        result.error = esp_wifi_scan_get_ap_records(&result.count, result.records);
       }
+      result.state = result.error == ESP_OK ? 2 : 3;
+      if (result.state == 3) result.count = 0;
+      portENTER_CRITICAL(&lock);
+      scan_view = result;
+      portEXIT_CRITICAL(&lock);
     }
+
     if (ap &&
         (demo_ms() > deadline || (close_after && demo_ms() > close_after))) {
       ap = false;
@@ -447,6 +465,9 @@ static void open_owned(void) {
   if (ap)
     return;
   close_after = 0;
+  portENTER_CRITICAL(&lock);
+  memset(&scan_view, 0, sizeof(scan_view));
+  portEXIT_CRITICAL(&lock);
   request_id = 0;
   demo_clear(&last_request, sizeof(last_request));
   wifi_config_t cfg = {0};
