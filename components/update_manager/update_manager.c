@@ -48,7 +48,10 @@ static void textstate(demo_state_t *s, void *a) {
   s->installed_release = installed_release;
   s->update_phase = journal.phase;
 }
-static void say(const char *s) { demo_edit(textstate, (void *)s); }
+static void say(const char *s) {
+  ESP_LOGI("update", "%s", s);
+  demo_edit(textstate, (void *)s);
+}
 static void progress(demo_state_t *s, void *a) {
   s->progress = *(unsigned *)a;
   s->update_phase = journal.phase;
@@ -93,6 +96,8 @@ static esp_http_client_handle_t open_url(const char *url) {
                                 .timeout_ms = 12000,
                                 .disable_auto_redirect = true,
                                 .buffer_size = 2048,
+                                /* GitHub asset redirects exceed IDF default TX 512. */
+                                .buffer_size_tx = 2048,
                                 .user_agent = "BMW-Demo/1"};
   esp_http_client_handle_t h = esp_http_client_init(&c);
   if (!h)
@@ -303,6 +308,8 @@ void update_boot_validate(bool passed) {
     if (!passed)
       esp_ota_mark_app_invalid_rollback_and_reboot();
   }
+  ESP_LOGI("update", "boot self-test %s; slot=%s address=0x%lx",
+           passed ? "passed" : "failed", p->label, (unsigned long)p->address);
   boot_ok = passed;
   boot_decided = true;
 }
