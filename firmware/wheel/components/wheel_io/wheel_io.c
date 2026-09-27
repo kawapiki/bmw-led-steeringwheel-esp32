@@ -3,10 +3,10 @@
 #include "driver/gpio.h"
 #include "driver/rmt_tx.h"
 #include "freertos/task.h"
-#include "led_strip.h"
+#include "wheel_led.h"
+#include "esp_log.h"
 #include "wheel_board.h"
 #include "wheel_core.h"
-static led_strip_handle_t strips[2];
 static rmt_channel_handle_t motor_channel;
 static rmt_encoder_handle_t motor_encoder;
 static const rmt_symbol_word_t motor_pulse = {
@@ -105,6 +105,7 @@ static void effects(void *a) {
       shift = false;
     uint32_t mask = rpm_mask(s.rpm);
     bool lit = !shift || ((demo_ms() / 125) % 2);
+    bool frame_ok = true;
     for (int chain = 0; chain < 2; chain++) {
       for (int p = 0; p < 23; p++) {
         bool on = !s.writing && !s.maintenance && lit && (mask & (1u << p));
@@ -119,13 +120,22 @@ static void effects(void *a) {
           g = s.led_mode == 4 ? 0 : g;
         }
         /* Physical pixel 0 lights the button; RPM pixels are 1..23. */
-        led_strip_set_pixel(strips[chain], p + 1, on ? r : 0, on ? g : 0, 0);
+        wheel_led_set(chain, p + 1, on ? r : 0, on ? g : 0, 0);
       }
-      led_strip_set_pixel(strips[chain], WHEEL_BUTTON_PIXEL, 0, s.pressed[chain] ? 25 : 3,
+      wheel_led_set(chain, WHEEL_BUTTON_PIXEL, 0, s.pressed[chain] ? 25 : 3,
                           s.pressed[chain] ? 25 : 3);
-      led_strip_refresh(strips[chain]);
+      esp_err_t err = wheel_led_refresh(chain);
+      if (err != ESP_OK) {
+        static uint32_t errors;
+        ++errors;
+        frame_ok = false;
+        if ((errors & (errors - 1)) == 0)
+          ESP_LOGW("wheel_led", "TX failure chain=%d count=%lu: %s", chain,
+                   (unsigned long)errors, esp_err_to_name(err));
+      }
     }
-    demo_edit(quiet, &s.writing);
+    bool stopped = s.writing && frame_ok;
+    demo_edit(quiet, &stopped);
     vTaskDelayUntil(&last, pdMS_TO_TICKS(20));
   }
 }
@@ -148,19 +158,7 @@ void wheel_io_start(void) {
   rmt_copy_encoder_config_t ec = {};
   ESP_ERROR_CHECK(rmt_new_copy_encoder(&ec, &motor_encoder));
   ESP_ERROR_CHECK(rmt_enable(motor_channel));
-  int pins[2] = {WHEEL_LED_CHAIN_0, WHEEL_LED_CHAIN_1};
-  for (int i = 0; i < 2; i++) {
-    led_strip_config_t cfg = {.strip_gpio_num = pins[i],
-                              .max_leds = 24,
-                              .led_model = LED_MODEL_WS2812,
-                              .color_component_format =
-                                  LED_STRIP_COLOR_COMPONENT_FMT_GRB};
-    led_strip_rmt_config_t rmt = {.resolution_hz = 10000000,
-                                  .mem_block_symbols = 96,
-                                  .flags.with_dma = (i == 0)};
-    ESP_ERROR_CHECK(led_strip_new_rmt_device(&cfg, &rmt, &strips[i]));
-    ESP_ERROR_CHECK(led_strip_clear(strips[i]));
-  }
+  ESP_ERROR_CHECK(wheel_led_init());
   configASSERT(xTaskCreatePinnedToCore(input, "wheel_input", 3072, NULL, 6,
                                        NULL, 1) == pdPASS);
   configASSERT(xTaskCreatePinnedToCore(effects, "wheel_effects", 3072, NULL, 4,

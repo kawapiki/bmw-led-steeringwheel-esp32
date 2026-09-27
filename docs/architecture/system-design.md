@@ -41,7 +41,7 @@ Az alábbi GPIO-k az eredeti firmware alapján ismertek; nem helyettesítik a fi
 | ESP32-S3 és FreeRTOS | Kétmagos vezérlő, feladatok, watchdog, indulás és hibakezelés | Kormányplatform |
 | TFT | ST7789/ST7789VW, 320 × 172; MOSI 15, CLK 16, CS 17, DC 18, RESET 13 | Kormányplatform: átvitel; UI: rajzolás |
 | Háttérvilágítás | GPIO38; bekapcsolás ismert, dimmelés lehetőségét ellenőrizni kell | Kormányplatform |
-| Két LED-lánc | GPIO3 és GPIO4, firmware szerint 24–24 címzett LED; a tulajdonos szerint lánconként az utolsó a gombot világítja, így 23–23 RPM-pixel marad; fizikai bal/jobb hozzárendelés ellenőrizendő | Periféria |
+| Két LED-lánc | GPIO3 és GPIO4, firmware szerint 24–24 címzett LED; a tulajdonos fizikai ellenőrzése szerint lánconként az első (index 0) a gombot világítja, így 23–23 RPM-pixel marad; fizikai bal/jobb hozzárendelés ellenőrizendő | Periféria |
 | Két saját gomb | K1 GPIO12, K2 GPIO11; aktív alacsony | Periféria, UI eseményfogyasztó |
 | Vibramotor vezérlése | GPIO21, aktív magas; véges idejű minták, alaphelyzetben kikapcsolva | Periféria |
 | Szenzorillesztés | BNO055-öt használó firmware: SDA39, SCL40, engedélyezés10, cím 0x28 | Periféria/szenzor |
