@@ -107,3 +107,12 @@ Owner reported the optimized Performance page showing5000–6000us UI period. Mo
 Added the LVGL9.4 QR component to wheel only. Active provisioning on Update shows the current AP SSID/password in Wi-Fi QR syntax, plus the manual portal address. UI-owned reusable148px I1 canvas,164px white outer frame, at least four quiet modules; no per-frame QR generation. The password cache and rendered QR are cleared when the AP password clears. No credentials logged. Current generated password alphabet is validated; unsupported formats retain manual entry instead of ambiguous QR data.
 
 Build and target/partition/backup audit passed. C QR encoder round-trip host test passed four sample password cases through zxing-cpp at the actual164px frame size. Only wheel app was written, hash verified; provisioning NVS and gateway unchanged. Physical phone-camera scan and Wi-Fi join await owner confirmation; neither Android nor iPhone is declared validated yet.
+
+
+## Phone QR success and AP-only HTTP rejection
+
+The owner confirmed that scanning the displayed QR successfully joined BMW-Wheel. The phone browser then showed HTTP403 body "AP only" when opening192.168.4.1. This confirms the reported phone's QR/join path, not both Android and iOS independently (phone OS not recorded).
+
+Root cause established against the configured IDF/lwIP sources: CONFIG_LWIP_IPV6=y makes esp_http_server listen on PF_INET6. lwip_getaddrname maps an IPv4 local address on that socket to IPv4-mapped IPv6. The portal guard allocated only sockaddr_in and interpreted the truncated sockaddr_in6 prefix as an IPv4 address, rejecting a legitimate AP request.
+
+The guard now uses sockaddr_storage, checks returned family/length and accepts only192.168.4.1 or its exact ::ffff:192.168.4.1 representation. Active-AP/deadline checks and request-token authorization remain. A production-used portable predicate has regression cases for both accepted forms, foreign addresses, IPv4-compatible-but-not-mapped IPv6, null and truncated input.27 native tests pass; both target builds and build/backup audit pass. Only the wheel app is reflashed; the updated gateway artifact is built but not installed because its phone portal is not in use. Actual post-fix phone HTTP access remains pending owner retest.

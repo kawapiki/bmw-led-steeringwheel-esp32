@@ -234,3 +234,17 @@ int portal_request_accept(uint32_t previous, uint32_t incoming,
     return same_payload ? 0 : -1;
   return 1;
 }
+
+bool portal_address_allowed(const uint8_t *address, size_t length) {
+  static const uint8_t ap_address[4] = {192, 168, 4, 1};
+  static const uint8_t mapped_prefix[12] = {0,0,0,0,0,0,0,0,0,0,255,255};
+  if (!address) return false;
+  if (length == 16) {
+    if (memcmp(address, mapped_prefix, sizeof(mapped_prefix)) != 0)
+      return false;
+    address += 12;
+  } else if (length != 4) {
+    return false;
+  }
+  return memcmp(address, ap_address, sizeof(ap_address)) == 0;
+}

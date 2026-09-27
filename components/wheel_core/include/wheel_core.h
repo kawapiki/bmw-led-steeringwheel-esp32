@@ -98,3 +98,6 @@ CORE_API bool sensor_configure(void *ctx, sensor_write_fn write,
 
 CORE_API int portal_request_accept(uint32_t previous, uint32_t incoming,
                                    bool same_payload);
+
+/* Network-order local socket address: IPv4 or IPv4-mapped IPv6 only. */
+CORE_API bool portal_address_allowed(const uint8_t *address, size_t length);

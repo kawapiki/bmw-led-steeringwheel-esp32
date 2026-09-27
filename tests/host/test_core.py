@@ -237,5 +237,19 @@ class RuntimePolicyTests(unittest.TestCase):
                 registers[reg]=value;return 0
             def read(ctx,reg,out):out[0]=registers[reg];return 0
             self.assertEqual(lib.sensor_configure(None,Write(write),Read(read),Delay(lambda c,n:None)),failed is None)
+class PortalSocketAddress(unittest.TestCase):
+    def test_only_ap_destination_in_both_socket_families(self):
+        lib.portal_address_allowed.argtypes=[C.c_void_p,C.c_size_t]
+        lib.portal_address_allowed.restype=C.c_bool
+        ap=bytes([192,168,4,1]);mapped=bytes(10)+b'\xff\xff'
+        self.assertTrue(lib.portal_address_allowed(ap,4))
+        self.assertTrue(lib.portal_address_allowed(mapped+ap,16))
+        for wrong in [bytes([192,168,4,2]),bytes([192,168,1,10]),bytes([127,0,0,1]),bytes(4)]:
+            self.assertFalse(lib.portal_address_allowed(wrong,4))
+            self.assertFalse(lib.portal_address_allowed(mapped+wrong,16))
+        self.assertFalse(lib.portal_address_allowed(bytes(12)+ap,16))
+        self.assertFalse(lib.portal_address_allowed(None,4))
+        self.assertFalse(lib.portal_address_allowed(mapped+ap,15))
+
 if __name__=="__main__":
     unittest.main()

@@ -86,17 +86,28 @@ static void event(void *a, esp_event_base_t b, int32_t id, void *d) {
     enqueue(DISCONNECTED);
 }
 static bool on_ap(httpd_req_t *r) {
-  struct sockaddr_in addr;
+  struct sockaddr_storage addr = {0};
   socklen_t n = sizeof(addr);
   bool enabled;
   portENTER_CRITICAL(&lock);
   enabled = visible.ap && demo_ms() < visible.deadline;
   portEXIT_CRITICAL(&lock);
-  return enabled &&
-         getsockname(httpd_req_to_sockfd(r), (struct sockaddr *)&addr, &n) ==
-             0 &&
-         addr.sin_addr.s_addr == inet_addr("192.168.4.1");
+  if (!enabled ||
+      getsockname(httpd_req_to_sockfd(r), (struct sockaddr *)&addr, &n) != 0)
+    return false;
+  if (addr.ss_family == AF_INET && n >= sizeof(struct sockaddr_in)) {
+    const struct sockaddr_in *v4 = (const struct sockaddr_in *)&addr;
+    return portal_address_allowed((const uint8_t *)&v4->sin_addr, 4);
+  }
+#if CONFIG_LWIP_IPV6
+  if (addr.ss_family == AF_INET6 && n >= sizeof(struct sockaddr_in6)) {
+    const struct sockaddr_in6 *v6 = (const struct sockaddr_in6 *)&addr;
+    return portal_address_allowed((const uint8_t *)&v6->sin6_addr, 16);
+  }
+#endif
+  return false;
 }
+
 static esp_err_t page(httpd_req_t *r) {
   if (!on_ap(r))
     return httpd_resp_send_err(r, HTTPD_403_FORBIDDEN, "AP only");
