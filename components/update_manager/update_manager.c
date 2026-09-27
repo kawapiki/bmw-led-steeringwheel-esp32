@@ -4,6 +4,8 @@
 #include "demo.h"
 #include "esp_crt_bundle.h"
 #include "esp_http_client.h"
+#include "esp_heap_caps.h"
+#include "esp_log.h"
 #include "esp_netif_sntp.h"
 #include "esp_ota_ops.h"
 #include "esp_random.h"
@@ -81,7 +83,9 @@ static bool tls_time(void) {
   return esp_netif_sntp_sync_wait(pdMS_TO_TICKS(15000)) == ESP_OK &&
          time(NULL) > 1735689600;
 }
+static char fetch_error[96];
 static esp_http_client_handle_t open_url(const char *url) {
+  snprintf(fetch_error, sizeof(fetch_error), "HTTPS connection failed");
   if (strncmp(url, "https://", 8))
     return NULL;
   esp_http_client_config_t c = {.url = url,
@@ -94,14 +98,30 @@ static esp_http_client_handle_t open_url(const char *url) {
   if (!h)
     return NULL;
   for (int i = 0; i < 5; i++) {
-    if (esp_http_client_open(h, 0) != ESP_OK ||
-        esp_http_client_fetch_headers(h) < 0)
+    esp_err_t opened = esp_http_client_open(h, 0);
+    if (opened != ESP_OK) {
+      int tls_error = 0, tls_flags = 0;
+      esp_http_client_get_and_clear_last_tls_error(h, &tls_error, &tls_flags);
+      snprintf(fetch_error, sizeof(fetch_error),
+               tls_error == PSA_ERROR_INSUFFICIENT_MEMORY || opened == ESP_ERR_NO_MEM
+                 ? "HTTPS memory exhausted" : "HTTPS connection failed");
+      ESP_LOGE("update_http", "open=%s tls=%d flags=%d free=%u largest=%u",
+               esp_err_to_name(opened), tls_error, tls_flags,
+               (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
+               (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
       break;
+    }
+    if (esp_http_client_fetch_headers(h) < 0) {
+      snprintf(fetch_error, sizeof(fetch_error), "HTTPS headers unavailable");
+      break;
+    }
     int status = esp_http_client_get_status_code(h);
     if (status == 200)
       return h;
-    if (status < 300 || status > 399)
+    if (status < 300 || status > 399) {
+      snprintf(fetch_error, sizeof(fetch_error), "GitHub HTTP %d", status);
       break;
+    }
     /* IDF validates HTTPS redirect schemes; independently refuse a non-HTTPS
      * Location. */
     if (esp_http_client_set_redirection(h) != ESP_OK) {
@@ -128,6 +148,69 @@ static int fetch(const char *url, uint8_t *out, size_t cap) {
   esp_http_client_close(h);
   esp_http_client_cleanup(h);
   return ok ? (int)used : -1;
+}
+/* Establish TLS before allocating the response; empty release lists must not
+ * reserve24KiB while TLS is allocating its handshake/record buffers. */
+static int fetch_listing(const char *url, char **out) {
+  const size_t limit = 24576;
+  *out = NULL;
+  esp_http_client_handle_t h = open_url(url);
+  if (!h) return -1;
+  int64_t declared = esp_http_client_get_content_length(h);
+  char *data = NULL;
+  size_t used = 0, capacity = 0;
+  int result = -1;
+  if (declared > 0 && (uint64_t)declared > limit) {
+    snprintf(fetch_error, sizeof(fetch_error), "Release page exceeds 24 KiB");
+    goto done;
+  }
+  capacity = declared > 0 ? (size_t)declared : 1024;
+  data = malloc(capacity + 1);
+  if (!data) {
+    snprintf(fetch_error, sizeof(fetch_error), "Release response: no memory");
+    goto done;
+  }
+  for (;;) {
+    /* Complete means received into the client's internal buffer, not consumed
+       by this reader. Always drain read() before checking completeness. */
+    char chunk[512];
+    int n = esp_http_client_read(h, chunk, sizeof(chunk));
+    if (n > 0) {
+      size_t needed = used + (size_t)n;
+      if (needed > limit) {
+        snprintf(fetch_error, sizeof(fetch_error), "Release page exceeds 24 KiB");
+        break;
+      }
+      if (needed > capacity) {
+        size_t next = capacity * 2;
+        if (next < needed) next = needed;
+        if (next > limit) next = limit;
+        char *grown = realloc(data, next + 1);
+        if (!grown) {
+          snprintf(fetch_error, sizeof(fetch_error), "Release response: no memory");
+          break;
+        }
+        data = grown; capacity = next;
+      }
+      memcpy(data + used, chunk, n);
+      used += n;
+      continue;
+    }
+    if (n == 0 && esp_http_client_is_complete_data_received(h)) {
+      data[used] = 0;
+      *out = data; data = NULL; result = used;
+    } else {
+      snprintf(fetch_error, sizeof(fetch_error), "Release response incomplete");
+    }
+    break;
+  }
+
+done:
+  free(data);
+  esp_http_client_close(h);
+  esp_http_client_cleanup(h);
+  if (result >= 0) ESP_LOGI("update_http", "release listing: %d bytes", result);
+  return result;
 }
 static bool get_manifest(uint32_t release, manifest_t *m) {
   char url[180];
@@ -436,21 +519,17 @@ static void search(void) {
   manifest_t best = {0};
   uint32_t releases[60];
   size_t release_count = 0;
-  char *json = malloc(24577);
-  if (!json) {
-    say("Not enough memory");
-    return;
-  }
+  char *json = NULL;
   for (int page = 1; page <= 12; page++) {
     char url[160];
     snprintf(url, sizeof(url),
              "https://api.github.com/repos/kawapiki/"
              "bmw-led-steeringwheel-esp32/releases?per_page=5&page=%d",
              page);
-    int n = fetch(url, (uint8_t *)json, 24576);
+    int n = fetch_listing(url, &json);
     if (n < 0) {
       free(json);
-      say("Release listing failed / too large");
+      say(fetch_error);
       return;
     }
     json[n] = 0;
@@ -481,6 +560,8 @@ static void search(void) {
         releases[release_count++] = release;
     }
     cJSON_Delete(list);
+    free(json);
+    json = NULL;
     if (page_count < 5)
       break;
   }
