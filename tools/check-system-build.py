@@ -13,6 +13,9 @@ for target,flash,slot,boot_offset,chip in (("wheel",32<<20,0x600000,0,9),("gatew
         assert flag+"=y" in cfg,flag
     assert "CONFIG_BT_NIMBLE_SM_LEGACY=y" not in cfg
     assert "CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1" in cfg
+    def config_int(name):
+        return int(next(line.split("=",1)[1] for line in cfg if line.startswith(name+"=")))
+    assert config_int("CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM") >= config_int("CONFIG_ESP_WIFI_RX_BA_WIN"), "Wi-Fi RX buffer/window mismatch"
     parts=[];raw=(build/"partition_table/partition-table.bin").read_bytes()
     for offset in range(0,len(raw),32):
         if struct.unpack_from("<H",raw,offset)[0]!=0x50aa:break

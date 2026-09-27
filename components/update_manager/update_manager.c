@@ -433,6 +433,8 @@ static bool install(const manifest_t *m, uint64_t tx) {
   uint8_t data[2048], digest[32];
   size_t digest_n;
   uint32_t count = 0;
+  uint64_t last_data = demo_ms();
+  unsigned timeouts = 0, logged_percent = 0;
   bool good = true;
   cancelled = false;
   while (count < m->size[index]) {
@@ -459,15 +461,32 @@ static bool install(const manifest_t *m, uint64_t tx) {
       break;
     }
     int n = esp_http_client_read(http, (char *)data, sizeof(data));
+    if (n == -ESP_ERR_HTTP_EAGAIN && ++timeouts <= 2 &&
+        demo_ms() - last_data < 30000) {
+      ESP_LOGW("update", "temporary read timeout at %lu/%lu; retry %u",
+               (unsigned long)count, (unsigned long)m->size[index], timeouts);
+      continue;
+    }
     if (n <= 0 || count + n > m->size[index] ||
         psa_hash_update(&hash, data, n) != PSA_SUCCESS ||
         esp_ota_write(ota, data, n) != ESP_OK) {
+      ESP_LOGE("update", "image read/write stopped: read=%d bytes=%lu/%lu",
+               n, (unsigned long)count, (unsigned long)m->size[index]);
       good = false;
       break;
     }
     count += n;
+    last_data = demo_ms();
+    timeouts = 0;
     unsigned percent = update_progress_percent(count, m->size[index]);
     demo_edit(progress, &percent);
+    if (percent >= logged_percent + 10 || percent == 100) {
+      logged_percent = percent;
+      ESP_LOGI("update", "image %u%%; bytes=%lu/%lu free=%u largest=%u",
+               percent, (unsigned long)count, (unsigned long)m->size[index],
+               (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
+               (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+    }
     publish_status();
   }
   esp_http_client_close(http);

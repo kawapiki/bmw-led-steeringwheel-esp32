@@ -59,3 +59,18 @@ Private raw bench logs remain ignored under `.test-build`; never commit credenti
 - Source review confirms idempotent gateway reuse: `update_prepare` accepts the already-valid image at the installed release floor when its SHA-256 matches, rebinding the new transaction without installing again. Existing native journal tests cover this state.
 - Owner asked to recheck and confirm release3 again. End-to-end paired completion remains pending; do not label r3 fully hardware-validated yet.
 - Performance follow-up: both target defaults use4 static Wi-Fi RX buffers while IDF's default RX BA window is6. IDF6.1 Kconfig recommends static buffers >= the BA window for throughput/compatibility. This is a source-level tuning concern, not a proven cause of this timeout; no radio setting was changed during the live OTA.
+
+## Retry behavior and network limitation
+
+- On user retry, wheel logged gateway-first wait at605699ms and began its own download at606500ms. Gateway did not download/reboot again: the already-valid release3 image was accepted for the new transaction. This idempotent reuse is now observed on the devices.
+- The wheel's second attempt failed opening the redirected server connection (TLS connection timeout, no certificate-verification error). At failure it reported68880 bytes free heap /31744 largest block, so this was not the earlier response-allocation failure.
+- Last Wi-Fi association reported RSSI -76dBm. Owner asked to bring the access point and wheel closer and retry; weak RF is a candidate cause, not conclusively proven.
+- The current wheel application continues running on ota_0. Gateway remains validated on ota_1/release3. Full paired completion remains pending.
+
+## Third attempt and bounded-network correction
+
+- Owner moved the access point/wheel closer; new association RSSI -68dBm. Discovery succeeded and the valid gateway was reused again. Wheel download still timed out and aborted at877125ms. Stronger RSSI alone did not resolve it.
+- Added a native regression harness that compiles the actual OTA read/write decision block. Data -> `-ESP_ERR_HTTP_EAGAIN` -> data failed with the original implementation and passes after the bounded retry. Permanent error, EOF, oversized chunk and repeated-timeout cases still fail without writing invalid bytes.
+- Retry permits at most two consecutive EAGAIN responses while time since last data is under30s; a blocking read can cross that threshold before it returns. Final SHA-256/signature/identity and boot validation remain mandatory.
+- Corrected Wi-Fi RX BA window to4 to match the four configured static RX buffers in both targets, per pinned IDF6.1 Kconfig recommendation. Added a build audit enforcing this relationship. This tuning and retry improve known software behavior; attribution of all RF/network stalls remains unproven.
+- Added10% progress, bytes, free/largest heap and stopped-read diagnostics. No credentials or signed download URLs are logged.

@@ -1,6 +1,6 @@
 # Wheel demo firmware
 
-Build target ESP32-S3, ESP-IDF6.1, LVGL9.4.0, led_strip3.0.3 and cJSON1.7.19. The firmware now implements the LCD port, animated two-button menu, simulated RPM, LED diagnostics, finite haptics, optional BNO055, authenticated BLE, phone Wi-Fi setup and authenticated paired/standalone OTA. It has not been flashed or runtime-qualified.
+Build target ESP32-S3, ESP-IDF6.1, LVGL9.4.0, led_strip3.0.3 and cJSON1.7.19. The firmware now implements the LCD port, animated two-button menu, simulated RPM, LED diagnostics, finite haptics, optional BNO055, authenticated BLE, phone Wi-Fi setup and authenticated paired/standalone OTA. Both devices have been flashed and bench-tested. See [current OTA bench results](../../docs/validation/2026-09-28-paired-ota-bench.md) for exactly what passed and remains pending; in-vehicle and rollback qualification are not complete.
 
 From repository root:
 1. Run ESP-IDF Python on tools/provision-development.py to create private local signing material and initial pairing-NVS source.
@@ -12,7 +12,7 @@ K1 short cycles pages; K2 activates page action; K1 hold returns home/cancels; K
 
 Phone connects to BMW-Wheel using the random password shown on TFT, then opens http://192.168.4.1. Scan lists up to12 networks; enter SSID/password manually, including hidden SSIDs. The portal is bound logically to the AP destination, protected by the AP WPA2 password and request token, and expires after5 minutes of authenticated inactivity; it closes10 seconds after successful provisioning. Credentials persist only after confirmed association/IP and can be forgotten from the portal or the wheel Forget Wi-Fi page.
 
-UI is single-owner core1, partial RGB565 double DMA buffers(30KiB), LVGL16ms refresh target,32KiB LVGL heap. No claim of measured FPS. RMT allocation: motor48-symbol hardware pulse; first LED chain DMA on S3's only DMA-capable TX channel; second chain96-symbol non-DMA channel. Initial LED limit10%. IO quiesces before OTA flash operations. Display offsets and orientation remain firmware-derived candidates in board header.
+UI is single-owner core1, partial RGB565 double DMA buffers(30KiB), LVGL16ms refresh target,32KiB LVGL heap. No claim of measured FPS. RMT allocation: motor48-symbol hardware pulse; both LED chains share S3's single DMA-capable TX channel sequentially, with the complete frame in a640-symbol DMA buffer; neither chain needs mid-frame refill interrupts. Initial LED limit10%. IO quiesces before OTA flash operations. Display offsets and orientation remain firmware-derived candidates in board header.
 
 Normal wheel demo does not consume CAN frames. BLE application telemetry is explicitly synthetic gateway data. Recovery is separate and remains available when application-major compatibility fails.
 
@@ -30,3 +30,5 @@ QR host round-trip test (optional, requires NumPy, Pillow and zxing-cpp2.3.0): c
 Phone network discovery: press Find networks once; the page waits for the result and fills a selectable list. Connection status uses a separate message area. If the scan fails, its error is shown and the button is re-enabled. Enter hidden network names manually. Portal behavior regression tests: `node --test tests/host/test_provision_ui.cjs`.
 
 Release-list reader regression test: `python tests/host/test_release_fetch.py` with HOST_CC pointing to the pinned Zig compiler (defaults to .test-build/host-clean/deps/ziglang/zig.exe). It compiles the production C reader into a controlled HTTP-stream harness and checks nine size/error/allocation and pre-buffered-response cases. Live TLS remains a separate bench test.
+
+Additional native regressions: `python tests/host/test_wheel_led.py` (production LED transport), `python tests/host/test_http_redirect.py` (pinned IDF request-line formatter, requires IDF_PATH or the default C:/esp/v6.1/esp-idf), and `python tests/host/test_ota_retry.py` (production OTA read/write decisions). Set HOST_CC as above. Wi-Fi static RX buffer count must cover the configured RX BA window; the build audit enforces this.
