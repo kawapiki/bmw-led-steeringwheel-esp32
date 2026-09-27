@@ -61,3 +61,40 @@ The owner corrected the physical order during bench testing: index0 on both chai
 The corrected wheel application built successfully (1,621,504 bytes), passed the target/partition/backup audit and was flashed at0x20000 only. NVS, pairing, partitions and gateway firmware were preserved. Write hash verification passed; the25-second post-flash capture showed app_main completion and resumed application-characteristic reads without panic/assert/abort. Physical appearance after correction still awaits owner confirmation.
 
 Corrected wheel SHA256: `e5fb47c611c05ac6a712dbbee6ca786591c16762a3ab249ce07caaec510dcded`. Local logs: `.test-build/wheel-led-order-flash.log`, `.test-build/COM6-led-order-boot.log`, `.test-build/COM7-led-order-boot.log`.
+
+
+## Owner-observed peripheral and runtime checks
+
+After the LED correction, the owner confirmed blue button illumination, K1 on the left, menu-page changes and short haptic feedback. The Bluetooth page showed Bonded link / app compatible, CURRENT, and a changing sequence value. These are owner observations, not instrumented latency measurements.
+
+Performance-page readings reported by the owner: last flush approximately3500us, UI period approximately45000us, minimum heap82304 bytes (80.375KiB). Input-drop count was not supplied. Workload: Performance page with the paired demo running; no Wi-Fi provisioning/HTTPS/OTA stress had been established. Values are individual approximate displayed observations, not averages or percentiles.
+
+Code interpretation: flush_us measures one partial-buffer transfer callback interval, not an entire frame. ui_period_us is the last interval between UI-loop heartbeat updates, quantized through millisecond demo_ms(); it includes LVGL handler work and scheduling. Thus45000us does not establish22FPS, although it is longer than the16ms responsiveness target and requires profiling. The Performance label refresh is itself throttled to33ms and snapshots preceding state, so the displayed value is not an unbiased sample distribution. Minimum heap is the historical total free-heap low-water mark, not the largest contiguous allocation or proof of TLS/OTA headroom. Performance acceptance remains open.
+
+
+## UI-loop profiling and redraw correction
+
+Owner supplied the missing input result: drops0, displayed UI period varying42000–47000us. Added UI-owned LVGL event counters and one serial summary every5 seconds (handler time, flush-wait time, flush count, loop mean and heap minimum). No ISR logging. This diagnostic logging remains enabled for bench work; timing includes instrumentation overhead, and handler measurements exclude the later serial log call.
+
+A120-second pre-fix capture reproduced the delay on the default RPM page. The owner did not navigate to Performance during these captures, so the following comparison is RPM-page only. The LVGL handler averaged36.1ms while direct flush-wait averaged0.432ms per loop, indicating substantial rendering/refresh work rather than direct waiting for SPI completion. Source inspection confirmed unchanged titles and opacity styles were set every33ms and the body label invalidated a fixed296x102 area even with only two lines.
+
+Changed page-only properties only when the page changes; unchanged body strings no longer invalidate the label. Body height now follows content with a102-pixel maximum, retaining the footer boundary. The animation duration, simulation rate, SPI clock, CPU clock and core ownership are unchanged. Also corrected the previously unused board button-pixel constant to0 and used it at the existing button-output call; this preserves the already confirmed physical mapping.
+
+| Measurement | Before | After |
+|---|---:|---:|
+| Complete five-second windows |23|11|
+| UI loop samples |2651|4126|
+| Weighted mean loop period |43573us|13362us|
+| Weighted mean LVGL handler |36113us|7773us|
+| Mean direct flush-wait per loop |432us|20us|
+| Range of five-second mean loop periods |43236–43823us|8904–17052us|
+| Max handler after first startup window |41566us|27762us|
+| Minimum free heap reported |82272 bytes|82272 bytes|
+
+After capture lasted60 seconds; differing RPM phases and the two-second constant-RPM plateau affect these means. Approximately3.26x faster average UI-loop cadence is observed in this comparison, not3.26x FPS. This is not a p95/p99 result or proof of16ms worst-case frames, physical input latency or high-load Wi-Fi/OTA performance. The isolated startup handler maximum was46856us after the change. Performance-page values after the fix and visual layout acceptance still need owner confirmation.
+
+Both diagnostic and corrected applications built and flashed with verified hashes. Final target/partition/backup audit passed. Only the wheel app at0x20000 was rewritten, preserving NVS/pairing and gateway. Final image1622240 bytes, SHA256 `3e1b5d04998057762ffe658926a47f7afe807d3752ff07fe9290b932956ac08d`. The final board-constant cleanup produced an identical binary to the measured after-build.
+
+Local capture hashes:
+- `.test-build/ui-profile-before.log`: `43c79d0929d27b53ee6b9a58b9c46e49fccad113a355e0ff80f6e564867928b3`
+- `.test-build/ui-profile-after.log`: `7ffe5bf4bae8eb64a1e9c5d2578a7d9a08865e0c877dce755ac2dd42caf593db`

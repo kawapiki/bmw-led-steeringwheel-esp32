@@ -3,6 +3,8 @@
 #include "display_port.h"
 #include "esp_app_desc.h"
 #include "esp_system.h"
+#include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/task.h"
 #include "wheel_core.h"
 #include <stdio.h>
@@ -11,6 +13,18 @@ static lv_obj_t *title, *body, *bar, *footer;
 static unsigned page;
 static uint64_t last_ui, opened;
 static bool armed;
+/* UI-owner measurements; no ISR work or per-frame serial logging. */
+static uint64_t wait_started, wait_total;
+static uint32_t flush_count;
+static void profile_display(lv_event_t *e) {
+  lv_event_code_t code = lv_event_get_code(e);
+  if (code == LV_EVENT_FLUSH_WAIT_START)
+    wait_started = esp_timer_get_time();
+  else if (code == LV_EVENT_FLUSH_WAIT_FINISH)
+    wait_total += esp_timer_get_time() - wait_started;
+  else if (code == LV_EVENT_FLUSH_START)
+    flush_count++;
+}
 static const char *names[] = {
     "DEMO / RPM",    "LED strips", "Buttons / haptics",
     "Motion sensor", "Bluetooth",  "Performance",
@@ -58,7 +72,8 @@ static void transition(void) {
 }
 static void run(void *a) {
   (void)a;
-  display_port_start();
+  lv_display_t *disp = display_port_start();
+  lv_display_add_event_cb(disp, profile_display, LV_EVENT_ALL, NULL);
   lv_obj_t *screen = lv_screen_active();
   lv_obj_set_style_bg_color(screen, lv_color_hex(0x07101c), 0);
   lv_obj_set_style_text_color(screen, lv_color_hex(0xe9f3ff), 0);
@@ -67,7 +82,8 @@ static void run(void *a) {
   body = lv_label_create(screen);
   lv_obj_set_pos(body, 12, 40);
   lv_obj_set_width(body, 296);
-  lv_obj_set_height(body, 102);
+  lv_obj_set_height(body, LV_SIZE_CONTENT);
+  lv_obj_set_style_max_height(body, 102, 0);
   lv_label_set_long_mode(body, LV_LABEL_LONG_CLIP);
   bar = lv_bar_create(screen);
   lv_obj_set_pos(bar, 12, 112);
@@ -79,7 +95,10 @@ static void run(void *a) {
   lv_obj_set_pos(footer, 12, 150);
   lv_label_set_text(footer, "K1 next   K2 action   hold K1 back");
   uint64_t drawn = 0;
+  unsigned displayed_page = 10;
   uint32_t offer_seen = 0;
+  uint64_t profile_window = esp_timer_get_time(), handler_total = 0;
+  uint32_t loops = 0, handler_max = 0;
   for (;;) {
     demo_state_t s;
     demo_get(&s);
@@ -120,11 +139,15 @@ static void run(void *a) {
     }
     if (page == 6 && s.offer && !s.pressed[1] && demo_ms() > opened + 50)
       armed = true;
+    if (displayed_page != page) {
+      lv_label_set_text(title, names[page]);
+      lv_obj_set_style_opa(bar, page == 0 ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+      displayed_page = page;
+      drawn = 0;
+    }
     if (demo_ms() - drawn >= (s.writing ? 200 : 33)) {
       drawn = demo_ms();
       char text[240];
-      lv_label_set_text(title, names[page]);
-      lv_obj_set_style_opa(bar, page == 0 ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
       switch (page) {
       case 0:
         snprintf(text, sizeof(text),
@@ -212,10 +235,29 @@ static void run(void *a) {
         break;
       }
       }
-      lv_label_set_text(body, text);
+      if (strcmp(lv_label_get_text(body), text) != 0)
+        lv_label_set_text(body, text);
     }
+    int64_t handler_start = esp_timer_get_time();
     lv_timer_handler();
+    uint32_t handler_us = esp_timer_get_time() - handler_start;
+    handler_total += handler_us;
+    if (handler_us > handler_max) handler_max = handler_us;
+    loops++;
     demo_edit(status, NULL);
+    uint64_t profile_now = esp_timer_get_time();
+    if (profile_now - profile_window >= 5000000) {
+      ESP_LOGI("ui_perf", "page=%u loops=%lu period_avg_us=%llu handler_avg_us=%llu handler_max_us=%lu flush_wait_total_us=%llu flushes=%lu heap_min=%lu",
+               page, (unsigned long)loops,
+               (unsigned long long)((profile_now-profile_window)/loops),
+               (unsigned long long)(handler_total/loops),
+               (unsigned long)handler_max, (unsigned long long)wait_total,
+               (unsigned long)flush_count,
+               (unsigned long)esp_get_minimum_free_heap_size());
+      profile_window = esp_timer_get_time();
+      handler_total = 0; handler_max = 0; loops = 0;
+      wait_total = 0; flush_count = 0;
+    }
     vTaskDelay(pdMS_TO_TICKS(5));
   }
 }

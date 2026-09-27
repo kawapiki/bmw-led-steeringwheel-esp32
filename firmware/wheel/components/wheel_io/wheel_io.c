@@ -121,7 +121,7 @@ static void effects(void *a) {
         /* Physical pixel 0 lights the button; RPM pixels are 1..23. */
         led_strip_set_pixel(strips[chain], p + 1, on ? r : 0, on ? g : 0, 0);
       }
-      led_strip_set_pixel(strips[chain], 0, 0, s.pressed[chain] ? 25 : 3,
+      led_strip_set_pixel(strips[chain], WHEEL_BUTTON_PIXEL, 0, s.pressed[chain] ? 25 : 3,
                           s.pressed[chain] ? 25 : 3);
       led_strip_refresh(strips[chain]);
     }
