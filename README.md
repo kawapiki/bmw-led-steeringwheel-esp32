@@ -2,6 +2,16 @@
 
 Hardware reference and original firmware backup for a Chinese aftermarket BMW E90 steering-wheel display board. Custom firmware development has not started.
 
+## Development planning
+
+- [First wheel demo: animations, peripherals and Wi-Fi OTA](docs/architecture/wheel-demo-v0.1.md) (Hungarian)
+- [System architecture and responsiveness targets](docs/architecture/system-design.md) (Hungarian)
+- [Shared component and communication contracts](docs/architecture/contracts.md)
+- [Nine specialized development agent roles](agents/README.md)
+- [Repository-wide agent instructions](AGENTS.md)
+
+These documents define the proposed two-device design and parallel development responsibilities. They do not claim implemented firmware, measured performance, or confirmed vehicle-bus compatibility.
+
 ## Hardware identification photos
 
 Photos of the wheel and board covered by this backup. Compare the PCB marking **CVS8161-332-V01-T16**, component layout, and connectors when identifying another unit; a similar-looking wheel alone does not establish hardware compatibility. Click a photo to view the original at full resolution.
@@ -50,7 +60,7 @@ Close-up of the USB-C port, two white connectors, and nearby power components. C
 | Flash | Winbond, JEDEC EF4019, 32 MiB, 3.3 V |
 | Crystal | 40 MHz |
 | Display | ST7789/ST7789VW driver, 320 × 172 |
-| LEDs | Two WS2812 chains, 24 addressed LEDs per chain |
+| LEDs | Two WS2812 chains, 24 addressed LEDs per chain; the final LED of each chain lights a button (owner-reported), leaving 23 RPM LEDs per chain |
 | Motion-sensor interface | BNO055, I²C address 0x28, 400 kHz |
 | USB | Native USB Serial/JTAG |
 | Secure Boot / flash encryption | Both disabled at backup time |
