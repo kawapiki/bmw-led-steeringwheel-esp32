@@ -4,12 +4,15 @@
 #include "driver/i2c_master.h"
 #include "freertos/task.h"
 #include "wheel_board.h"
+#include "wheel_core.h"
 static i2c_master_dev_handle_t dev;
 static uint8_t bytes[32];
-static bool valid;
+static bool valid, configured;
+static uint8_t mode, units, system_status;
 static void publish(demo_state_t *s, void *a) {
   (void)a;
   s->sensor_ok = valid;
+  s->orientation_valid = valid && system_status == 5 && (bytes[31] >> 6) >= 2;
   if (valid) {
     for (int i = 0; i < 3; i++) {
       s->accel[i] = (int16_t)(bytes[i * 2] | bytes[i * 2 + 1] << 8);
@@ -23,25 +26,35 @@ static void publish(demo_state_t *s, void *a) {
 static esp_err_t readreg(uint8_t r, void *b, size_t n) {
   return i2c_master_transmit_receive(dev, &r, 1, b, n, 20);
 }
+
+static int sensor_read(void *ctx, uint8_t reg, uint8_t *value) {
+  (void)ctx;
+  return readreg(reg, value, 1) == ESP_OK ? 0 : -1;
+}
+static int sensor_write(void *ctx, uint8_t reg, uint8_t value) {
+  (void)ctx;
+  uint8_t data[] = {reg, value};
+  return i2c_master_transmit(dev, data, sizeof(data), 20) == ESP_OK ? 0 : -1;
+}
+static void sensor_delay(void *ctx, unsigned ms) {
+  (void)ctx;
+  vTaskDelay(pdMS_TO_TICKS(ms));
+}
 static void run(void *a) {
   (void)a;
   vTaskDelay(pdMS_TO_TICKS(800));
-  uint8_t id = 0;
-  if (readreg(0, &id, 1) == ESP_OK && id == 0xa0) {
-    uint8_t mode[] = {0x3d, 0};
-    if (i2c_master_transmit(dev, mode, 2, 20) == ESP_OK) {
-      vTaskDelay(pdMS_TO_TICKS(25));
-      mode[1] = 0x0c;
-      i2c_master_transmit(dev, mode, 2, 20);
-      vTaskDelay(pdMS_TO_TICKS(25));
-    }
-  } else {
+  configured = sensor_configure(NULL, sensor_write, sensor_read, sensor_delay);
+  if (!configured) {
+    valid = false;
     demo_edit(publish, NULL);
     vTaskDelete(NULL);
     return;
   }
   for (;;) {
-    valid = readreg(8, bytes, 24) == ESP_OK &&
+    valid = configured && readreg(0x3d, &mode, 1) == ESP_OK && mode == 0x0c &&
+            readreg(0x3b, &units, 1) == ESP_OK && units == 0 &&
+            readreg(0x39, &system_status, 1) == ESP_OK && system_status == 5 &&
+            readreg(8, bytes, 24) == ESP_OK &&
             readreg(0x35, &bytes[31], 1) == ESP_OK;
     demo_edit(publish, NULL);
     vTaskDelay(pdMS_TO_TICKS(40));

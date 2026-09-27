@@ -16,3 +16,6 @@ bool ble_link_read(uint8_t *data, size_t *size);
 
 void ble_link_poll_telemetry(void);
 bool ble_link_ready(void);
+
+uint32_t ble_link_session(void);
+void ble_link_health(uint64_t *heartbeat, uint32_t *cycles);

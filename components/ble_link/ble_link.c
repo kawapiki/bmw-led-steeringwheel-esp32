@@ -2,8 +2,10 @@
 #include "demo.h"
 #include "wheel_core.h"
 
+#include "esp_random.h"
 #include "host/ble_hs.h"
 #include "host/util/util.h"
+#include "nimble/nimble_npl.h"
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
 #include "nvs.h"
@@ -31,7 +33,9 @@ static uint16_t conn = BLE_HS_CONN_HANDLE_NONE, handle;
 static QueueHandle_t incoming;
 static SemaphoreHandle_t completed;
 static volatile int result;
-static uint32_t operation;
+static uint32_t operation, connection_nonce, host_cycles;
+static uint64_t host_heartbeat;
+static struct ble_npl_callout heartbeat_callout;
 static uint64_t connected_at;
 static uint8_t frozen[128];
 static size_t frozen_n;
@@ -42,6 +46,10 @@ static portMUX_TYPE lock = portMUX_INITIALIZER_UNLOCKED;
 static void publish(demo_state_t *s, void *a) {
   (void)a;
   s->link_secure = secure;
+  if (!secure)
+    s->app_compatible = false;
+  s->telemetry_fresh = telemetry_is_fresh(secure, s->app_compatible,
+                                          s->telemetry_received, demo_ms());
 }
 static bool authenticated(uint16_t c) {
   struct ble_gap_conn_desc d;
@@ -60,6 +68,9 @@ static int access_cb(uint16_t c, uint16_t h, struct ble_gatt_access_ctxt *ctx,
       portENTER_CRITICAL(&lock);
       memcpy(frozen, status_data, status_n);
       frozen_n = status_n;
+      if (frozen_n >= 56)
+        for (unsigned i = 0; i < 4; i++)
+          frozen[52 + i] = connection_nonce >> (8 * i);
       portEXIT_CRITICAL(&lock);
     }
     int rc = os_mbuf_append(ctx->om, frozen, frozen_n);
@@ -173,6 +184,9 @@ static int gap(struct ble_gap_event *e, void *a) {
     if (!e->connect.status) {
       conn = e->connect.conn_handle;
       connected_at = demo_ms();
+      connection_nonce = esp_random();
+      if (!connection_nonce)
+        connection_nonce = 1;
       if (central)
         ble_gap_security_initiate(conn);
     } else
@@ -181,6 +195,7 @@ static int gap(struct ble_gap_event *e, void *a) {
   case BLE_GAP_EVENT_DISCONNECT:
     conn = BLE_HS_CONN_HANDLE_NONE;
     secure = false;
+    connection_nonce = 0;
     recovery_message_t discarded;
     while (xQueueReceive(incoming, &discarded, 0) == pdTRUE)
       demo_clear(&discarded, sizeof(discarded));
@@ -209,9 +224,21 @@ static int gap(struct ble_gap_event *e, void *a) {
   }
   return 0;
 }
+static void host_tick(struct ble_npl_event *event) {
+  (void)event;
+  portENTER_CRITICAL(&lock);
+  host_heartbeat = demo_ms();
+  host_cycles++;
+  portEXIT_CRITICAL(&lock);
+  recovery_fragment_expire(&assembly, demo_ms());
+  ble_npl_callout_reset(&heartbeat_callout, ble_npl_time_ms_to_ticks32(250));
+}
 static void synced(void) {
   ble_hs_util_ensure_addr(0);
   ready = true;
+  ble_npl_callout_init(&heartbeat_callout, nimble_port_get_dflt_eventq(),
+                       host_tick, NULL);
+  ble_npl_callout_reset(&heartbeat_callout, ble_npl_time_ms_to_ticks32(250));
 }
 static void host(void *a) {
   (void)a;
@@ -228,8 +255,9 @@ static void supervise(void *a) {
   for (;;) {
     if (ready && conn == BLE_HS_CONN_HANDLE_NONE)
       seek();
-    if (conn != BLE_HS_CONN_HANDLE_NONE && central && (!secure || !handle) &&
-        demo_ms() - connected_at > 15000) {
+    if (recovery_auth_expired(conn != BLE_HS_CONN_HANDLE_NONE,
+                              secure && (!central || handle), connected_at,
+                              demo_ms())) {
       ble_gap_terminate(conn, BLE_ERR_REM_USER_CONN_TERM);
     }
     if (conn != BLE_HS_CONN_HANDLE_NONE && !secure) {
@@ -257,6 +285,7 @@ static void supervise(void *a) {
     telemetry[2] = 800 + (demo_ms() % 12000) * 6200 / 12000;
     telemetry[3] = demo_ms();
     portEXIT_CRITICAL(&lock);
+    demo_edit(publish, NULL);
     vTaskDelay(pdMS_TO_TICKS(1000));
   }
 }
@@ -383,6 +412,10 @@ bool ble_link_read(uint8_t *d, size_t *n) {
 static void telemetry_state(demo_state_t *s, void *a) {
   uint32_t *p = a;
   s->app_compatible = p[0] == 1;
+  if (s->ble_sequence != p[1] || !s->telemetry_received)
+    s->telemetry_received = demo_ms();
+  s->telemetry_fresh = telemetry_is_fresh(s->link_secure, s->app_compatible,
+                                          s->telemetry_received, demo_ms());
   s->ble_sequence = p[1];
   s->ble_rpm = p[2];
 }
@@ -395,3 +428,11 @@ void ble_link_poll_telemetry(void) {
     demo_edit(telemetry_state, t);
 }
 bool ble_link_ready(void) { return ready; }
+
+uint32_t ble_link_session(void) { return connection_nonce; }
+void ble_link_health(uint64_t *heartbeat, uint32_t *cycles) {
+  portENTER_CRITICAL(&lock);
+  *heartbeat = host_heartbeat;
+  *cycles = host_cycles;
+  portEXIT_CRITICAL(&lock);
+}

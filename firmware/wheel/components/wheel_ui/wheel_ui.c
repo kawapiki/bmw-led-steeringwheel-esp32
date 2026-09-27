@@ -1,9 +1,12 @@
 #include "wheel_ui.h"
 #include "demo.h"
 #include "display_port.h"
+#include "esp_app_desc.h"
 #include "esp_system.h"
 #include "freertos/task.h"
+#include "wheel_core.h"
 #include <stdio.h>
+#include <string.h>
 static lv_obj_t *title, *body, *bar, *footer;
 static unsigned page;
 static uint64_t last_ui, opened;
@@ -11,7 +14,8 @@ static bool armed;
 static const char *names[] = {
     "DEMO / RPM",    "LED strips", "Buttons / haptics",
     "Motion sensor", "Bluetooth",  "Performance",
-    "Update",        "About",      "Update mode"};
+    "Update",        "About",      "Update mode",
+    "Forget Wi-Fi"};
 static void status(demo_state_t *s, void *a) {
   (void)a;
   uint64_t now = demo_ms();
@@ -22,7 +26,11 @@ static void status(demo_state_t *s, void *a) {
 static void intent(intent_kind_t kind) {
   demo_state_t s;
   demo_get(&s);
-  intent_t v = {.kind = kind, .release = s.candidate_release};
+  intent_t v = {.kind = kind,
+                .release = s.candidate_release,
+                .generation = s.candidate_generation,
+                .standalone = s.standalone};
+  memcpy(v.digest, s.candidate_digest, 32);
   xQueueSend(demo_intents, &v, 0);
 }
 static void led_mode(demo_state_t *s, void *a) {
@@ -59,6 +67,8 @@ static void run(void *a) {
   body = lv_label_create(screen);
   lv_obj_set_pos(body, 12, 40);
   lv_obj_set_width(body, 296);
+  lv_obj_set_height(body, 102);
+  lv_label_set_long_mode(body, LV_LABEL_LONG_CLIP);
   bar = lv_bar_create(screen);
   lv_obj_set_pos(bar, 12, 112);
   lv_obj_set_size(bar, 296, 14);
@@ -73,15 +83,15 @@ static void run(void *a) {
   for (;;) {
     demo_state_t s;
     demo_get(&s);
-    if (s.candidate_release != offer_seen || !s.offer) {
-      offer_seen = s.candidate_release;
+    if (s.candidate_generation != offer_seen || !s.offer) {
+      offer_seen = s.candidate_generation;
       armed = false;
       opened = demo_ms();
     }
     demo_key_t key;
     while (xQueueReceive(demo_keys, &key, 0) == pdTRUE) {
       if (key == KEY_NEXT) {
-        page = (page + 1) % 9;
+        page = (page + 1) % 10;
         transition();
         opened = demo_ms();
         armed = false;
@@ -89,6 +99,8 @@ static void run(void *a) {
         intent(INTENT_CANCEL);
         page = 0;
         armed = false;
+      } else if (page == 9 && key == KEY_SELECT) {
+        intent(INTENT_FORGET);
       } else if (page == 8 && key == KEY_SELECT) {
         demo_edit(mode, NULL);
       } else if (page == 1 && key == KEY_SELECT) {
@@ -96,7 +108,9 @@ static void run(void *a) {
       } else if (page == 2 && key == KEY_SELECT) {
         demo_edit(haptic, NULL);
       } else if (page == 6 && key == KEY_SELECT) {
-        intent(s.maintenance ? INTENT_CHECK : INTENT_SERVICE);
+        intent(s.maintenance && s.network[0] && !s.ap_password[0]
+                   ? INTENT_CHECK
+                   : INTENT_SERVICE);
         opened = demo_ms();
         armed = false;
       } else if (page == 6 && key == KEY_CONFIRM && armed && s.offer) {
@@ -131,24 +145,35 @@ static void run(void *a) {
         break;
       case 3:
         if (s.sensor_ok)
-          snprintf(text, sizeof(text),
-                   "BNO055 cal %02x / raw values\nE(1/16deg): %d %d %d\nA: %d "
-                   "%d %d\nG: %d %d %d\nM: %d %d %d",
-                   s.calibration, s.euler[0], s.euler[1], s.euler[2],
-                   s.accel[0], s.accel[1], s.accel[2], s.gyro[0], s.gyro[1],
-                   s.gyro[2], s.mag[0], s.mag[1], s.mag[2]);
+          snprintf(
+              text, sizeof(text),
+              "Fusion %s / cal %u%u%u%u\nE deg %.0f %.0f %.0f\nA m/s2 %.1f "
+              "%.1f %.1f\nG deg/s %.0f %.0f %.0f\nM uT %.0f %.0f %.0f",
+              s.orientation_valid ? "ready" : "uncal", s.calibration >> 6,
+              (s.calibration >> 4) & 3, (s.calibration >> 2) & 3,
+              s.calibration & 3, s.euler[0] / 16., s.euler[1] / 16.,
+              s.euler[2] / 16., s.accel[0] / 100., s.accel[1] / 100.,
+              s.accel[2] / 100., s.gyro[0] / 16., s.gyro[1] / 16.,
+              s.gyro[2] / 16., s.mag[0] / 16., s.mag[1] / 16., s.mag[2] / 16.);
         else
           snprintf(text, sizeof(text),
                    "Sensor unavailable\nIdentity / wiring not verified");
         break;
-      case 4:
-        snprintf(text, sizeof(text),
-                 "%s\nSample %lu / RPM %lu\nApp %s; recovery independent",
-                 s.link_secure ? "Authenticated gateway"
-                               : "Connecting / unpaired",
-                 (unsigned long)s.ble_sequence, (unsigned long)s.ble_rpm,
-                 s.app_compatible ? "v1 compatible" : "unknown / mismatch");
+      case 4: {
+        bool fresh = telemetry_is_fresh(s.link_secure, s.app_compatible,
+                                        s.telemetry_received, demo_ms());
+        snprintf(
+            text, sizeof(text),
+            "%s / app %s\n%s seq %lu / RPM %lu\nAge %llu ms; recovery separate",
+            s.link_secure ? "Bonded link" : "Disconnected",
+            s.app_compatible ? "compatible" : "unknown",
+            fresh ? "CURRENT" : "STALE", (unsigned long)s.ble_sequence,
+            (unsigned long)s.ble_rpm,
+            (unsigned long long)(s.telemetry_received
+                                     ? demo_ms() - s.telemetry_received
+                                     : 0));
         break;
+      }
       case 5:
         snprintf(text, sizeof(text),
                  "Flushes %lu / last %lu us\nUI period %lu us / drops "
@@ -158,7 +183,9 @@ static void run(void *a) {
                  (unsigned long)esp_get_minimum_free_heap_size());
         break;
       case 6:
-        snprintf(text, sizeof(text), "%s\n%s\n%s", s.network, s.update,
+        snprintf(text, sizeof(text), "%s\n%.74s\n%u%% / installed %lu\n%s",
+                 s.network, s.update, s.progress,
+                 (unsigned long)s.installed_release,
                  s.offer ? "Hold K2 to confirm" : s.ap_password);
         break;
       case 8:
@@ -168,10 +195,22 @@ static void run(void *a) {
                  s.standalone ? "STANDALONE wheel only"
                               : "PAIRED system update");
         break;
-      default:
+      case 9:
         snprintf(text, sizeof(text),
-                 "Wheel demo 0.1.0 / ESP-IDF 6.1\nCVS8161 / firmware-derived "
-                 "pinout\nHardware validation pending");
+                 "K2: forget saved Wi-Fi\nBond / recovery identity retained");
+        break;
+      default: {
+        const esp_app_desc_t *app = esp_app_get_description();
+        snprintf(text, sizeof(text),
+                 "%.24s / release %lu\nBuild %02x%02x%02x%02x / reset %d\nIDF "
+                 "%.24s\nBoard "
+                 "wiring unverified",
+                 app->version, (unsigned long)s.installed_release,
+                 app->app_elf_sha256[0], app->app_elf_sha256[1],
+                 app->app_elf_sha256[2], app->app_elf_sha256[3],
+                 esp_reset_reason(), app->idf_ver);
+        break;
+      }
       }
       lv_label_set_text(body, text);
     }

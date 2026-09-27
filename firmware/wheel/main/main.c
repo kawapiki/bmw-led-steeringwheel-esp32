@@ -10,6 +10,8 @@
 #include "wheel_ui.h"
 static void rpm(demo_state_t *s, void *a) {
   (void)a;
+  if (s->maintenance)
+    return;
   uint32_t t = demo_ms() % 18000;
   s->rpm = t < 12000   ? 800 + t * 6200 / 12000
            : t < 14000 ? 7000

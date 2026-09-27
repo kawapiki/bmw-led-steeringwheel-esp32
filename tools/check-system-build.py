@@ -30,6 +30,8 @@ for target,flash,slot,boot_offset,chip in (("wheel",32<<20,0x600000,0,9),("gatew
     assert data[0]==0xe9 and struct.unpack_from("<H",data,12)[0]==chip
     assert struct.unpack_from("<I",data,32)[0]==0xabcd5432
     assert data[80:112].rstrip(b"\0").decode()==target+"_demo"
+    marker=('BMWDEMO-ID:'+('wheel_cvs8161' if target=='wheel' else 'lilygo_xy32_v1_1')+':p1:c1:r1:END').encode().ljust(64,b'\0')
+    assert data.count(marker)==1,'Wrong immutable build identity'
     assert len(data)<=slot
     boot=(build/"bootloader/bootloader.bin").stat().st_size
     assert boot+boot_offset<=0x10000

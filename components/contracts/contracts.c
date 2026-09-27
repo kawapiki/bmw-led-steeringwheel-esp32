@@ -26,3 +26,11 @@ void demo_clear(void *memory, size_t length) {
   while (length--)
     *p++ = 0;
 }
+
+#if CONFIG_IDF_TARGET_ESP32S3
+static const char build_identity[64] = "BMWDEMO-ID:wheel_cvs8161:p1:c1:r1:END";
+#else
+static const char build_identity[64] =
+    "BMWDEMO-ID:lilygo_xy32_v1_1:p1:c1:r1:END";
+#endif
+const char *demo_build_identity(void) { return build_identity; }

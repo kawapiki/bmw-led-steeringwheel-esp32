@@ -6,8 +6,8 @@ import subprocess
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
-OUT = ROOT / ".test-build"
-OUT.mkdir(exist_ok=True)
+OUT = Path(os.environ.get("HOST_TEST_OUT",str(ROOT / ".test-build")))
+OUT.mkdir(parents=True,exist_ok=True)
 compiler = os.environ.get("HOST_CC", str(OUT/"zig/ziglang/zig.exe"))
 subprocess.run([compiler, "cc", "-shared", "-O1", "-DCORE_HOST_TEST",
     "-I"+str(ROOT/"components/wheel_core/include"),
@@ -141,5 +141,101 @@ class TransportTests(unittest.TestCase):
         frame=bytes(header)+b'\x01\x08\x00password'
         self.assertLess(lib.recovery_validate(frame,len(frame),True,True,True),0)
 
+
+class Journal(C.Structure):
+    _fields_=[('schema',C.c_uint32),('phase',C.c_uint32),('release',C.c_uint32),('size',C.c_uint32),('tx',C.c_uint64),('hash',C.c_uint8*32),('address',C.c_uint32)]
+class Session(C.Structure):
+    _fields_=[('nonce',C.c_uint32),('request',C.c_uint32),('established',C.c_bool)]
+for name,args,result in [
+ ('update_prepare',[C.POINTER(Journal),C.c_uint32,C.c_uint64,C.c_void_p,C.c_uint32],C.c_int),
+ ('update_reconcile_phase',[C.c_uint32,C.c_bool,C.c_bool],C.c_uint32),
+ ('update_coordinator_action',[C.c_uint32,C.c_bool,C.c_bool],C.c_int),
+ ('recovery_dispatch_accept',[C.POINTER(Session),C.c_void_p,C.c_size_t,C.c_uint32],C.c_int),
+ ('recovery_auth_expired',[C.c_bool,C.c_bool,C.c_uint64,C.c_uint64],C.c_bool),
+ ('recovery_health_ready',[C.c_uint64,C.c_uint64,C.c_uint32,C.c_uint64,C.c_uint32],C.c_bool),
+ ('telemetry_is_fresh',[C.c_bool,C.c_bool,C.c_uint64,C.c_uint64],C.c_bool),
+ ('candidate_matches',[C.c_uint32,C.c_void_p,C.c_uint32,C.c_void_p],C.c_bool),
+ ('update_progress_percent',[C.c_uint32,C.c_uint32],C.c_uint),
+ ('portal_request_accept',[C.c_uint32,C.c_uint32,C.c_bool],C.c_int)]:
+    fn=getattr(lib,name);fn.argtypes=args;fn.restype=result
+class RuntimePolicyTests(unittest.TestCase):
+    def test_journal_reset_failure_retry_and_valid_gate(self):
+        j=Journal(); digest=b'A'*32
+        self.assertEqual(lib.update_prepare(C.byref(j),2,10,digest,1),0)
+        self.assertEqual(j.phase,1)
+        self.assertEqual(lib.update_prepare(C.byref(j),2,10,digest,1),0)
+        j.phase=2
+        self.assertEqual(lib.update_coordinator_action(j.phase,True,True),2)
+        j.phase=lib.update_reconcile_phase(j.phase,False,False)
+        self.assertEqual(j.phase,5)
+        self.assertEqual(lib.update_coordinator_action(j.phase,True,False),0)
+        self.assertNotEqual(lib.update_prepare(C.byref(j),2,10,digest,1),0)
+        self.assertEqual(lib.update_prepare(C.byref(j),2,11,digest,1),0)
+        j.phase=3
+        self.assertEqual(lib.update_reconcile_phase(3,True,True),3)
+        self.assertEqual(lib.update_reconcile_phase(3,False,False),5)
+        j.phase=lib.update_reconcile_phase(3,False,True)
+        self.assertEqual(j.phase,4)
+        self.assertEqual(lib.update_prepare(C.byref(j),2,12,digest,2),0)
+        self.assertEqual(lib.update_coordinator_action(j.phase,True,False),3)
+        self.assertEqual(lib.update_coordinator_action(j.phase,False,False),0)
+    def test_both_role_auth_deadlines(self):
+        for role in ('wheel','gateway'):
+            with self.subTest(role=role):
+                self.assertFalse(lib.recovery_auth_expired(True,False,100,15099))
+                self.assertTrue(lib.recovery_auth_expired(True,False,100,15100))
+                self.assertFalse(lib.recovery_auth_expired(True,True,100,20000))
+    def test_boot_requires_both_actual_runtime_heartbeats(self):
+        self.assertTrue(lib.recovery_health_ready(4000,3950,30,3900,12))
+        self.assertFalse(lib.recovery_health_ready(4000,100,1,3900,12))
+        self.assertFalse(lib.recovery_health_ready(4000,3950,30,100,1))
+        self.assertFalse(lib.recovery_health_ready(1000,950,30,900,12))
+    def test_dispatch_sessions_replay_and_download_cancel(self):
+        import struct
+        g=Session()
+        def send(session,request,op=1,nonce=101):
+            f=struct.pack('<BBBBHHIIQ',0xe9,0x90,1,op,0,0,session,request,88)
+            return lib.recovery_dispatch_accept(C.byref(g),f,len(f),nonce)
+        self.assertNotEqual(send(101,1,6),0)
+        self.assertEqual(send(101,2),0)
+        self.assertNotEqual(send(202,3),0)
+        self.assertNotEqual(send(101,2),0)
+        self.assertEqual(send(101,4,6),0)
+        self.assertNotEqual(send(101,3,6),0)
+        self.assertEqual(send(202,1,nonce=202),0)
+        self.assertNotEqual(send(101,5,6,nonce=202),0)
+        self.assertEqual(send(202,2,6,nonce=202),0)
+    def test_telemetry_age_disconnect_and_candidate_identity(self):
+        self.assertTrue(lib.telemetry_is_fresh(True,True,1000,3500))
+        for values in [(True,True,1000,3501),(False,True,1000,1001),(True,False,1000,1001),(True,True,0,1001)]:
+            self.assertFalse(lib.telemetry_is_fresh(*values))
+        self.assertTrue(lib.candidate_matches(3,b'A'*32,3,b'A'*32))
+        self.assertFalse(lib.candidate_matches(3,b'A'*32,4,b'A'*32))
+        self.assertFalse(lib.candidate_matches(3,b'A'*32,3,b'B'*32))
+    def test_progress_and_portal_idempotence(self):
+        self.assertEqual([lib.update_progress_percent(a,b) for a,b in [(0,0),(25,100),(100,100),(101,100)]],[0,25,100,100])
+        self.assertEqual(lib.portal_request_accept(8,8,True),0)
+        self.assertEqual(lib.portal_request_accept(8,8,False),-1)
+        self.assertEqual(lib.portal_request_accept(8,7,True),-1)
+        self.assertEqual(lib.portal_request_accept(8,9,False),1)
+    def test_idle_fragment_expiry_zeroizes_credentials(self):
+        lib.recovery_fragment_expire.argtypes=[C.POINTER(Assembly),C.c_uint64]
+        lib.recovery_fragment_expire.restype=C.c_bool
+        state=Assembly();state.size=8;state.expected=40;state.started=100;state.data[0]=99
+        self.assertFalse(lib.recovery_fragment_expire(C.byref(state),3100))
+        self.assertTrue(lib.recovery_fragment_expire(C.byref(state),3101))
+        self.assertEqual(bytes(state),bytes(C.sizeof(state)))
+    def test_sensor_configuration_write_faults_cannot_be_valid(self):
+        Write=C.CFUNCTYPE(C.c_int,C.c_void_p,C.c_uint8,C.c_uint8)
+        Read=C.CFUNCTYPE(C.c_int,C.c_void_p,C.c_uint8,C.POINTER(C.c_uint8))
+        Delay=C.CFUNCTYPE(None,C.c_void_p,C.c_uint)
+        lib.sensor_configure.argtypes=[C.c_void_p,Write,Read,Delay];lib.sensor_configure.restype=C.c_bool
+        for failed in (None,(0x3d,0),(0x3d,12),(0x3b,0)):
+            registers={0:0xa0,0x3d:0,0x3b:0}
+            def write(ctx,reg,value):
+                if (reg,value)==failed:return -1
+                registers[reg]=value;return 0
+            def read(ctx,reg,out):out[0]=registers[reg];return 0
+            self.assertEqual(lib.sensor_configure(None,Write(write),Read(read),Delay(lambda c,n:None)),failed is None)
 if __name__=="__main__":
     unittest.main()

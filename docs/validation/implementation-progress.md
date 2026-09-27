@@ -31,3 +31,7 @@ Final builds: wheel1,613,040 bytes in6MiB slot, gateway1,243,808 bytes in0x1e000
 Link-time free DIRAM164,774 bytes on wheel and free DRAM74,101 bytes on gateway are not runtime heap guarantees. PSRAM remains disabled; first boot must measure largest free block, stack margins, TLS coexistence and failure behavior.
 
 Review [candidate wire contract](../architecture/recovery-wire-candidate.md), [initial flash/restore plan](initial-custom-flash-plan.md), and target READMEs. Hardware acceptance M2–M7 remains pending for actual displays, peripherals, pairing/reconnect, phone provisioning, OTA rollback/fault injection and endurance.
+
+## Review round1 source corrections
+
+Interrupted-update retry, replay/session dispatch, both-role auth deadline, boot-task liveness, sensor configuration validity, telemetry age, OTA result UI and reproducible native setup are corrected and await scoped re-review.26 native tests and7 real-image release tests pass, including a new clean pinned toolchain directory. Final images: wheel1,621,520 bytes; gateway1,251,136 bytes. Both build/partition/security/identity audits and original backup hash pass. No hardware write or live OTA evidence. Wheel link-time free DIRAM164,230 bytes and gateway free DRAM73,589 bytes remain pre-runtime figures. Flat diagnostic navigation, tilt graphic and fractional LED refinement are visual follow-ups; all physical acceptance remains pending.

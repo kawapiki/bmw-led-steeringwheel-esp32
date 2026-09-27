@@ -22,16 +22,17 @@
   "system-r"
 typedef struct {
   uint32_t release, size[2];
-  uint8_t hash[2][32];
+  uint8_t hash[2][32], identity[32];
 } manifest_t;
-typedef struct {
-  uint32_t schema, phase, release, size;
-  uint64_t tx;
-  uint8_t hash[32];
-  uint32_t target_address;
-} journal_t;
-static bool wheel, offer, cancelled, journal_ready;
-static uint32_t session, request, last_request, remote_session;
+typedef update_journal_t journal_t;
+static bool wheel, offer, cancelled, journal_ready, boot_decided, boot_ok,
+    active_work;
+static uint32_t candidate_generation, last_result, installed_release,
+    worker_cycles;
+static uint64_t worker_heartbeat;
+static portMUX_TYPE health_lock = portMUX_INITIALIZER_UNLOCKED;
+static recovery_session_t dispatch_guard;
+static uint32_t session, request;
 static uint64_t transaction;
 static manifest_t candidate;
 static journal_t journal;
@@ -40,9 +41,16 @@ static void textstate(demo_state_t *s, void *a) {
   snprintf(s->update, sizeof(s->update), "%s", (char *)a);
   s->offer = offer;
   s->candidate_release = offer ? candidate.release : 0;
+  s->candidate_generation = offer ? candidate_generation : 0;
+  memcpy(s->candidate_digest, candidate.identity, 32);
+  s->installed_release = installed_release;
+  s->update_phase = journal.phase;
 }
 static void say(const char *s) { demo_edit(textstate, (void *)s); }
-static void progress(demo_state_t *s, void *a) { s->progress = *(unsigned *)a; }
+static void progress(demo_state_t *s, void *a) {
+  s->progress = *(unsigned *)a;
+  s->update_phase = journal.phase;
+}
 static void writing(demo_state_t *s, void *a) { s->writing = *(bool *)a; }
 static uint32_t le32(const uint8_t *p) {
   return p[0] | p[1] << 8 | p[2] << 16 | (uint32_t)p[3] << 24;
@@ -59,8 +67,11 @@ static void put64(uint8_t *p, uint64_t v) {
   put32(p + 4, v >> 32);
 }
 static bool save(void) {
-  return nvs_set_blob(nvs, "journal", &journal, sizeof(journal)) == ESP_OK &&
-         nvs_commit(nvs) == ESP_OK;
+  bool ok = nvs_set_blob(nvs, "journal", &journal, sizeof(journal)) == ESP_OK &&
+            nvs_commit(nvs) == ESP_OK;
+  if (!ok)
+    last_result = RECOVERY_STORAGE;
+  return ok;
 }
 static bool tls_time(void) {
   if (time(NULL) > 1735689600)
@@ -143,6 +154,7 @@ static bool get_manifest(uint32_t release, manifest_t *m) {
   if (!good || le32(data + 80) != 1 || le32(data + 84) != 1 ||
       le32(data + 88) != 1 || le32(data + 92) == 0)
     return false;
+  memcpy(m->identity, hash, 32);
   m->release = release;
   m->size[0] = le32(data + 8);
   m->size[1] = le32(data + 12);
@@ -174,31 +186,88 @@ static bool installed_hash(const journal_t *j) {
   return psa_hash_finish(&h, digest, sizeof(digest), &size) == PSA_SUCCESS &&
          !memcmp(digest, j->hash, 32);
 }
+
+static void heartbeat(void) {
+  portENTER_CRITICAL(&health_lock);
+  worker_heartbeat = demo_ms();
+  worker_cycles++;
+  portEXIT_CRITICAL(&health_lock);
+}
+static bool healthy(void) {
+  uint64_t wh, bh;
+  uint32_t wc, bc;
+  portENTER_CRITICAL(&health_lock);
+  wh = worker_heartbeat;
+  wc = worker_cycles;
+  portEXIT_CRITICAL(&health_lock);
+  ble_link_health(&bh, &bc);
+  return journal_ready && recovery_health_ready(demo_ms(), wh, wc, bh, bc);
+}
 void update_boot_validate(bool passed) {
-  passed = passed && journal_ready && ble_link_ready();
+  while (passed && !healthy() && demo_ms() < 15000)
+    vTaskDelay(pdMS_TO_TICKS(50));
+  passed = passed && healthy();
   esp_ota_img_states_t state;
   const esp_partition_t *p = esp_ota_get_running_partition();
   if (esp_ota_get_state_partition(p, &state) == ESP_OK &&
       state == ESP_OTA_IMG_PENDING_VERIFY) {
-    if (journal.phase == 3 && !installed_hash(&journal))
+    if (journal.phase != UPDATE_BOOT_PENDING || !installed_hash(&journal))
       passed = false;
-    if (passed)
-      ESP_ERROR_CHECK(esp_ota_mark_app_valid_cancel_rollback());
-    else
+    if (passed) {
+      if (esp_ota_mark_app_valid_cancel_rollback() != ESP_OK)
+        passed = false;
+    }
+    if (!passed)
       esp_ota_mark_app_invalid_rollback_and_reboot();
   }
+  boot_ok = passed;
+  boot_decided = true;
 }
 static void publish_status(void) {
-  uint8_t b[64] = {0};
+  uint8_t b[80] = {0};
   memcpy(b, "BST1", 4);
   put32(b + 4, journal.phase);
   put32(b + 8, journal.release);
   put64(b + 12, journal.tx);
   memcpy(b + 20, journal.hash, 32);
-  put32(b + 52, session);
+  put32(b + 52, ble_link_session());
   put32(b + 56, request);
   put32(b + 60, 1);
+  put32(b + 64, last_result);
+  put32(b + 68,
+        active_work || (journal.phase == UPDATE_BOOT_PENDING && !boot_decided));
+  demo_state_t state;
+  demo_get(&state);
+  put32(b + 72, state.progress);
   ble_link_status(b, sizeof(b));
+}
+static int accept_message(const recovery_message_t *m) {
+  int rc = recovery_dispatch_accept(&dispatch_guard, m->bytes, m->size,
+                                    ble_link_session());
+  if (rc == RECOVERY_OK)
+    request = le32(m->bytes + 12);
+  last_result = rc;
+  return rc;
+}
+static bool image_identity(const esp_partition_t *p, uint32_t size) {
+  uint8_t buf[1087];
+  size_t tail = 0;
+  unsigned count = 0;
+  for (uint32_t off = 0; off < size;) {
+    size_t n = size - off;
+    if (n > 1024)
+      n = 1024;
+    if (esp_partition_read(p, off, buf + tail, n) != ESP_OK)
+      return false;
+    size_t length = tail + n;
+    for (size_t i = 0; i + 64 <= length; i++)
+      if (!memcmp(buf + i, demo_build_identity(), 64))
+        count++;
+    tail = length < 63 ? length : 63;
+    memmove(buf, buf + length - tail, tail);
+    off += n;
+  }
+  return count == 1;
 }
 static recovery_message_t packet(uint8_t op, size_t n) {
   recovery_message_t m = {.size = 24 + n};
@@ -217,6 +286,11 @@ static bool install(const manifest_t *m, uint64_t tx) {
   const esp_partition_t *p = esp_ota_get_next_update_partition(NULL);
   if (!p || m->size[index] > p->size)
     return false;
+  active_work = true;
+  last_result = RECOVERY_OK;
+  say("Downloading authenticated image");
+  unsigned zero = 0;
+  demo_edit(progress, &zero);
   bool active = true;
   demo_edit(writing, &active);
   uint64_t start = demo_ms();
@@ -230,7 +304,9 @@ static bool install(const manifest_t *m, uint64_t tx) {
         demo_ms() - start < 1000);
     if (s.input_heartbeat <= start || !s.io_quiet) {
       active = false;
+      active_work = false;
       demo_edit(writing, &active);
+      say("Output quiet check failed");
       return false;
     }
   }
@@ -277,9 +353,14 @@ static bool install(const manifest_t *m, uint64_t tx) {
     if (!wheel) {
       recovery_message_t control;
       if (ble_link_receive(&control)) {
-        if (control.bytes[3] == 6 && control.size == 24 &&
-            le64(control.bytes + 16) == tx)
-          cancelled = true;
+        if (accept_message(&control) == RECOVERY_OK) {
+          if (control.bytes[3] == 6 && le64(control.bytes + 16) == tx)
+            cancelled = true;
+          else if (control.bytes[3] != 1 && control.bytes[3] != 2 &&
+                   control.bytes[3] != 7)
+            last_result = RECOVERY_BUSY;
+        }
+        publish_status();
         demo_clear(&control, sizeof(control));
       }
     }
@@ -295,8 +376,9 @@ static bool install(const manifest_t *m, uint64_t tx) {
       break;
     }
     count += n;
-    unsigned percent = (uint64_t)count * 100 / m->size[index];
+    unsigned percent = update_progress_percent(count, m->size[index]);
     demo_edit(progress, &percent);
+    publish_status();
   }
   esp_http_client_close(http);
   esp_http_client_cleanup(http);
@@ -313,41 +395,53 @@ static bool install(const manifest_t *m, uint64_t tx) {
     goto failure;
   esp_app_desc_t desc;
   if (esp_ota_get_partition_description(p, &desc) != ESP_OK ||
-      strcmp(desc.project_name, wheel ? "wheel_demo" : "gateway_demo"))
+      strcmp(desc.project_name, wheel ? "wheel_demo" : "gateway_demo") ||
+      !image_identity(p, m->size[index]))
     goto failure;
   journal.phase = 3;
   publish_status();
   if (!save() || esp_ota_set_boot_partition(p) != ESP_OK)
     goto failure;
   say("Verified; restarting");
-  vTaskDelay(pdMS_TO_TICKS(150));
+  vTaskDelay(pdMS_TO_TICKS(500));
   esp_restart();
 failure:
   active = false;
+  active_work = false;
   demo_edit(writing, &active);
-  journal.phase = 5;
-  save();
-  say("Update failed; original boot retained");
+  journal.phase = UPDATE_FAILED;
+  last_result = cancelled ? RECOVERY_CANCELLED : RECOVERY_IMAGE;
+  if (!save())
+    say("Storage failure; update stopped");
+  else
+    say(cancelled ? "Cancelled; previous image retained"
+                  : "Update failed; confirm again to retry");
+  publish_status();
   return false;
 }
 static void search(void) {
   offer = false;
+  candidate_generation++;
   say("Checking signed GitHub releases");
   if (!service_wifi_ready() || !tls_time()) {
     say("Network or time unavailable");
     return;
   }
   uint32_t floor = 0;
-  nvs_get_u32(nvs, "release", &floor);
+  esp_err_t floor_error = nvs_get_u32(nvs, "release", &floor);
+  if (floor_error != ESP_OK && floor_error != ESP_ERR_NVS_NOT_FOUND) {
+    say("Release journal read failed");
+    return;
+  }
   manifest_t best = {0};
-  uint32_t releases[15];
+  uint32_t releases[60];
   size_t release_count = 0;
   char *json = malloc(24577);
   if (!json) {
     say("Not enough memory");
     return;
   }
-  for (int page = 1; page <= 3; page++) {
+  for (int page = 1; page <= 12; page++) {
     char url[160];
     snprintf(url, sizeof(url),
              "https://api.github.com/repos/kawapiki/"
@@ -367,6 +461,7 @@ static void search(void) {
       say("Invalid release listing");
       return;
     }
+    int page_count = cJSON_GetArraySize(list);
     cJSON *entry = NULL;
     cJSON_ArrayForEach(entry, list) {
       cJSON *draft = cJSON_GetObjectItemCaseSensitive(entry, "draft"),
@@ -382,10 +477,12 @@ static void search(void) {
       if (*tail || tail == t + 8 || release > UINT32_MAX || release <= floor ||
           release <= best.release)
         continue;
-      if (release_count < 15)
+      if (release_count < 60)
         releases[release_count++] = release;
     }
     cJSON_Delete(list);
+    if (page_count < 5)
+      break;
   }
 
   free(json);
@@ -406,17 +503,17 @@ static void search(void) {
 }
 
 static bool status_matches(const uint8_t *s, size_t n, uint64_t tx) {
-  return n == 64 && !memcmp(s, "BST1", 4) && le32(s + 8) == candidate.release &&
+  return n == 80 && !memcmp(s, "BST1", 4) && le32(s + 8) == candidate.release &&
          le64(s + 12) == tx && !memcmp(s + 20, candidate.hash[1], 32);
 }
 static bool confirmed_status(const uint8_t *s, size_t n) {
   update_gate_t g = {.gateway_online = ble_link_secure(),
-                     .gateway_image_valid = n == 64 && le32(s + 4) == 4,
+                     .gateway_image_valid = n == 80 && le32(s + 4) == 4,
                      .authenticated_status = ble_link_secure(),
                      .status_fresh = true,
                      .requested_release = candidate.release,
                      .requested_transaction = transaction};
-  if (n != 64 || memcmp(s, "BST1", 4))
+  if (n != 80 || memcmp(s, "BST1", 4))
     return false;
   g.confirmed_release = le32(s + 8);
   g.confirmed_transaction = le64(s + 12);
@@ -424,32 +521,80 @@ static bool confirmed_status(const uint8_t *s, size_t n) {
   memcpy(g.requested_digest, candidate.hash[1], 32);
   return update_wheel_allowed(&g);
 }
+
+static bool establish_session(const uint8_t *status, size_t size) {
+  if (size != 80 || memcmp(status, "BST1", 4) || le32(status + 60) != 1 ||
+      !le32(status + 52))
+    return false;
+  uint32_t nonce = le32(status + 52);
+  if (session != nonce) {
+    session = nonce;
+    request = 0;
+  }
+  if (request < le32(status + 56))
+    request = le32(status + 56);
+  recovery_message_t hello = packet(1, 0);
+  return ble_link_send(&hello);
+}
+static bool command(const recovery_message_t *m) {
+  if (!ble_link_send(m))
+    return false;
+  uint32_t wanted = le32(m->bytes + 12);
+  uint64_t until = demo_ms() + 5000;
+  while (demo_ms() < until) {
+    uint8_t status[128];
+    size_t n = sizeof(status);
+    if (ble_link_read(status, &n) && n == 80 && le32(status + 52) == session &&
+        le32(status + 56) == wanted) {
+      if (le32(status + 64) != RECOVERY_OK) {
+        say("Gateway rejected command; retry available");
+        return false;
+      }
+      return true;
+    }
+    vTaskDelay(pdMS_TO_TICKS(100));
+  }
+  say("Gateway command outcome unknown");
+  return false;
+}
 static bool paired(void) {
   if (!ble_link_secure()) {
     say("Paired gateway unavailable; update stopped");
     return false;
   }
-  bool resume = journal.phase == 1 && journal.release == candidate.release &&
+  bool resume = journal.phase == UPDATE_PREPARED &&
+                journal.release == candidate.release &&
                 !memcmp(journal.hash, candidate.hash[1], 32);
-  transaction =
-      resume ? journal.tx : ((uint64_t)esp_random() << 32) | esp_random();
-  if (!transaction)
-    transaction = 1;
+  transaction = resume ? journal.tx : 0;
   uint8_t status[128];
   size_t size = sizeof(status);
-  bool queried = ble_link_read(status, &size);
-  if (queried && confirmed_status(status, size))
-    return true;
-  bool already_started = queried && status_matches(status, size, transaction) &&
-                         (le32(status + 4) == 2 || le32(status + 4) == 3);
-  /* Durable local intent precedes every remote mutation. User confirmation is
-   * required to enter here. */
-  journal = (journal_t){
-      .schema = 1, .phase = 1, .release = candidate.release, .tx = transaction};
-  memcpy(journal.hash, candidate.hash[1], 32);
-  if (!save())
+  if (!ble_link_read(status, &size) || size != 80) {
+    say("Gateway status unavailable");
     return false;
-  if (!already_started) {
+  }
+  bool match = status_matches(status, size, transaction);
+  int action = update_coordinator_action(le32(status + 4), match,
+                                         le32(status + 68) != 0);
+  if (action == 3 && confirmed_status(status, size))
+    return true;
+  if (action == 0) {
+    uint64_t previous = transaction;
+    do {
+      transaction = ((uint64_t)esp_random() << 32) | esp_random();
+    } while (!transaction || transaction == previous);
+  }
+  journal = (journal_t){.schema = 1,
+                        .phase = UPDATE_PREPARED,
+                        .release = candidate.release,
+                        .tx = transaction};
+  memcpy(journal.hash, candidate.hash[1], 32);
+  if (!save()) {
+    say("Cannot persist update intent");
+    return false;
+  }
+  if (!establish_session(status, size))
+    return false;
+  if (action != 2) {
     char ssid[33] = {0}, pass[64] = {0};
     if (!service_wifi_credentials(ssid, pass)) {
       demo_clear(pass, sizeof(pass));
@@ -460,7 +605,7 @@ static bool paired(void) {
     m.bytes[25] = strlen(pass);
     memcpy(m.bytes + 26, ssid, strlen(ssid));
     memcpy(m.bytes + 26 + strlen(ssid), pass, strlen(pass));
-    bool sent = ble_link_send(&m);
+    bool sent = command(&m);
     demo_clear(&m, sizeof(m));
     demo_clear(pass, sizeof(pass));
     demo_clear(ssid, sizeof(ssid));
@@ -469,122 +614,233 @@ static bool paired(void) {
     m = packet(4, 36);
     put32(m.bytes + 24, candidate.release);
     memcpy(m.bytes + 28, candidate.hash[1], 32);
-    if (!ble_link_send(&m))
+    if (!command(&m))
       return false;
     m = packet(5, 0);
-    if (!ble_link_send(&m))
+    if (!command(&m))
       return false;
   }
   say("Gateway first; waiting for verified boot");
   uint64_t until = demo_ms() + 300000;
   while (demo_ms() < until) {
-    intent_t action;
-    if (xQueueReceive(demo_intents, &action, 0) == pdTRUE &&
-        action.kind == INTENT_CANCEL) {
-      recovery_message_t stop = packet(6, 0);
-      ble_link_send(&stop);
-      journal.phase = 5;
-      save();
-      say("Paired update cancelled");
+    intent_t intent;
+    if (xQueueReceive(demo_intents, &intent, 0) == pdTRUE &&
+        intent.kind == INTENT_CANCEL) {
+      size = sizeof(status);
+      if (ble_link_read(status, &size) && establish_session(status, size)) {
+        recovery_message_t stop = packet(6, 0);
+        command(&stop);
+      }
+      journal.phase = UPDATE_FAILED;
+      last_result = RECOVERY_CANCELLED;
+      if (!save())
+        say("Cancel persistence failed");
+      else
+        say("Paired update cancelled");
       return false;
     }
     size = sizeof(status);
-    if (ble_link_read(status, &size) && confirmed_status(status, size))
-      return true;
-    vTaskDelay(pdMS_TO_TICKS(1000));
+    if (ble_link_read(status, &size) && size == 80) {
+      if (confirmed_status(status, size))
+        return true;
+      if (status_matches(status, size, transaction) &&
+          le32(status + 4) == UPDATE_FAILED) {
+        say("Gateway failed/interrupted; confirm to retry");
+        return false;
+      }
+      if (status_matches(status, size, transaction) &&
+          le32(status + 4) == UPDATE_DOWNLOADING) {
+        unsigned p = le32(status + 72);
+        demo_edit(progress, &p);
+        char text[96];
+        snprintf(text, sizeof(text), "Gateway download %u%%", p);
+        say(text);
+      }
+    }
+    vTaskDelay(pdMS_TO_TICKS(200));
   }
-  say("Gateway pending; confirm again to resume");
+  say("Gateway outcome unknown; confirm to query");
   return false;
+}
+static bool release_floor(uint32_t *floor) {
+  *floor = 0;
+  esp_err_t err = nvs_get_u32(nvs, "release", floor);
+  return err == ESP_OK || err == ESP_ERR_NVS_NOT_FOUND;
 }
 static void gateway_commands(void) {
   recovery_message_t m;
   while (ble_link_receive(&m)) {
-    uint32_t s = le32(m.bytes + 8), r = le32(m.bytes + 12);
-    uint64_t tx = le64(m.bytes + 16);
-    uint8_t op = m.bytes[3];
-    size_t n = m.size - 24;
-    if (!s || !r || !tx || (s == remote_session && r <= last_request)) {
+    if (accept_message(&m) != RECOVERY_OK) {
       demo_clear(&m, sizeof(m));
+      publish_status();
       continue;
     }
-    if (s != remote_session) {
-      remote_session = s;
-      last_request = 0;
-    }
-    last_request = r;
-    request = r;
-    if (op == 3 && n >= 2) {
+    uint64_t tx = le64(m.bytes + 16);
+    uint8_t op = m.bytes[3];
+    if (op == 1 || op == 2 ||
+        op == 7) { /* session establishment/status; no mutation */
+    } else if (!boot_ok)
+      last_result = RECOVERY_BUSY;
+    else if (op == 3) {
       char ssid[33] = {0}, pass[64] = {0};
       memcpy(ssid, m.bytes + 26, m.bytes[24]);
       memcpy(pass, m.bytes + 26 + m.bytes[24], m.bytes[25]);
-      service_wifi_connect(ssid, pass);
+      if (!service_wifi_connect(ssid, pass))
+        last_result = RECOVERY_BUSY;
       demo_clear(ssid, sizeof(ssid));
       demo_clear(pass, sizeof(pass));
-    } else if (op == 4 && n == 36) {
-      uint32_t release = le32(m.bytes + 24), floor = 0;
-      nvs_get_u32(nvs, "release", &floor);
-      if (release == floor && journal.phase == 4 &&
-          !memcmp(journal.hash, m.bytes + 28, 32)) {
-        journal.tx = tx;
-        save();
-      } else if (release > floor && tx != journal.tx) {
-        journal =
-            (journal_t){.schema = 1, .phase = 1, .release = release, .tx = tx};
-        memcpy(journal.hash, m.bytes + 28, 32);
-        save();
+    } else if (op == 4) {
+      uint32_t floor;
+      update_journal_t next = journal;
+      if (!release_floor(&floor))
+        last_result = RECOVERY_STORAGE;
+      else {
+        last_result =
+            update_prepare(&next, le32(m.bytes + 24), tx, m.bytes + 28, floor);
+        if (last_result == RECOVERY_OK) {
+          journal = next;
+          if (!save())
+            journal.phase = UPDATE_FAILED;
+        }
       }
-    } else if (op == 5 && n == 0 && journal.phase == 1 && journal.tx == tx) {
-      uint64_t end = demo_ms() + 30000;
-      while (!service_wifi_ready() && demo_ms() < end)
-        vTaskDelay(pdMS_TO_TICKS(200));
-      manifest_t next;
-      if (service_wifi_ready() && tls_time() &&
-          get_manifest(journal.release, &next) &&
-          !memcmp(next.hash[1], journal.hash, 32)) {
-        demo_clear(&m, sizeof(m));
-        install(&next, tx);
-      } else {
-        journal.phase = 5;
-        save();
+    } else if (op == 5) {
+      if (journal.phase == UPDATE_VALID &&
+          journal.tx == tx) { /* already installed; idempotent */
+      } else if (journal.phase != UPDATE_PREPARED || journal.tx != tx)
+        last_result = RECOVERY_STATE;
+      else {
+        journal.phase = UPDATE_DOWNLOADING;
+        active_work = true;
+        if (!save()) {
+          active_work = false;
+          journal.phase = UPDATE_FAILED;
+        } else {
+          publish_status();
+          demo_clear(&m, sizeof(m));
+          uint64_t end = demo_ms() + 30000;
+          while (!service_wifi_ready() && demo_ms() < end)
+            vTaskDelay(pdMS_TO_TICKS(100));
+          manifest_t next;
+          if (service_wifi_ready() && tls_time() &&
+              get_manifest(journal.release, &next) &&
+              !memcmp(next.hash[1], journal.hash, 32)) {
+            install(&next, tx);
+          } else {
+            active_work = false;
+            journal.phase = UPDATE_FAILED;
+            last_result = RECOVERY_NETWORK;
+            if (!save())
+              last_result = RECOVERY_STORAGE;
+            say("Network/manifest failure; retry available");
+          }
+        }
       }
-    } else if (op == 6 && n == 0 && tx == journal.tx && journal.phase == 1) {
-      journal.phase = 5;
-      save();
+    } else if (op == 6) {
+      if (tx == journal.tx && journal.phase == UPDATE_PREPARED) {
+        journal.phase = UPDATE_FAILED;
+        last_result = RECOVERY_CANCELLED;
+        if (!save())
+          last_result = RECOVERY_STORAGE;
+      } else
+        last_result = RECOVERY_STATE;
     }
     demo_clear(&m, sizeof(m));
     publish_status();
   }
 }
-static void run(void *a) {
-  (void)a;
-  ESP_ERROR_CHECK(nvs_open("updates", NVS_READWRITE, &nvs));
-  size_t size = sizeof(journal);
-  if (nvs_get_blob(nvs, "journal", &journal, &size) != ESP_OK ||
-      size != sizeof(journal) || journal.schema != 1)
-    demo_clear(&journal, sizeof(journal));
-  journal_ready = true;
-  vTaskDelay(pdMS_TO_TICKS(12000));
-  if (journal.phase == 3) {
-    esp_ota_img_states_t state;
-    if (installed_hash(&journal) &&
-        esp_ota_get_state_partition(esp_ota_get_running_partition(), &state) ==
-            ESP_OK &&
-        state == ESP_OTA_IMG_VALID) {
-      journal.phase = 4;
-      if (nvs_set_u32(nvs, "release", journal.release) != ESP_OK || !save())
-        journal.phase = 5;
+static void boot_outcome(void) {
+  esp_ota_img_states_t state = ESP_OTA_IMG_UNDEFINED;
+  esp_ota_get_state_partition(esp_ota_get_running_partition(), &state);
+  uint32_t old = journal.phase;
+  if (old == UPDATE_DOWNLOADING) {
+    journal.phase = update_reconcile_phase(old, false, false);
+    last_result = RECOVERY_IMAGE;
+    if (!save())
+      say("Interrupted update / storage error");
+    else
+      say("Interrupted download; retry available");
+  } else if (old == UPDATE_BOOT_PENDING &&
+             state != ESP_OTA_IMG_PENDING_VERIFY) {
+    bool match = installed_hash(&journal);
+    journal.phase = update_reconcile_phase(old, false, match);
+    if (journal.phase == UPDATE_VALID) {
+      installed_release = journal.release;
+      if (nvs_set_u32(nvs, "release", installed_release) != ESP_OK || !save()) {
+        journal.phase = UPDATE_FAILED;
+        last_result = RECOVERY_STORAGE;
+        say("Image valid; result persistence failed");
+      } else {
+        char text[96];
+        snprintf(text, sizeof(text), "Installed release %lu successfully",
+                 (unsigned long)installed_release);
+        say(text);
+      }
     } else {
-      journal.phase = 5;
-      save();
+      last_result = RECOVERY_IMAGE;
+      if (!save())
+        say("Rollback / storage error");
+      else
+        say("Rollback: previous firmware restored");
     }
+  } else if (old == UPDATE_FAILED)
+    say("Last update failed; confirm a release to retry");
+  else if (old == UPDATE_VALID) {
+    char text[96];
+    snprintf(text, sizeof(text), "Installed release %lu",
+             (unsigned long)installed_release);
+    say(text);
   }
   publish_status();
+}
+static void run(void *a) {
+  (void)a;
+  if (nvs_open("updates", NVS_READWRITE, &nvs) != ESP_OK) {
+    say("Update storage unavailable");
+    vTaskDelete(NULL);
+    return;
+  }
+  size_t size = sizeof(journal);
+  esp_err_t err = nvs_get_blob(nvs, "journal", &journal, &size);
+  if (err == ESP_ERR_NVS_NOT_FOUND)
+    demo_clear(&journal, sizeof(journal));
+  else if (err != ESP_OK || size != sizeof(journal) || journal.schema != 1) {
+    say("Unsupported/corrupt update journal");
+    vTaskDelete(NULL);
+    return;
+  }
+  if (!release_floor(&installed_release)) {
+    say("Release journal unreadable");
+    vTaskDelete(NULL);
+    return;
+  }
+  journal_ready = true;
+  boot_outcome();
+  bool reconciled = false;
   for (;;) {
+    heartbeat();
+    if (!boot_decided) {
+      if (!wheel)
+        gateway_commands();
+      vTaskDelay(pdMS_TO_TICKS(100));
+      continue;
+    }
+    if (!reconciled) {
+      reconciled = true;
+      boot_outcome();
+      if (!boot_ok)
+        say("Boot self-test failed; updates disabled");
+    }
+    if (!boot_ok) {
+      vTaskDelay(pdMS_TO_TICKS(100));
+      continue;
+    }
     if (wheel) {
       intent_t intent;
       if (xQueueReceive(demo_intents, &intent, pdMS_TO_TICKS(100)) == pdTRUE) {
         if (intent.kind == INTENT_SERVICE)
           service_wifi_open();
+        else if (intent.kind == INTENT_FORGET)
+          service_wifi_forget();
         else if (intent.kind == INTENT_CHECK)
           search();
         else if (intent.kind == INTENT_CANCEL) {
@@ -592,17 +848,15 @@ static void run(void *a) {
           service_wifi_close();
           say("Cancelled");
         } else if (intent.kind == INTENT_CONFIRM && offer &&
-                   intent.release == candidate.release) {
+                   intent.release == candidate.release &&
+                   candidate_matches(candidate_generation, candidate.identity,
+                                     intent.generation, intent.digest)) {
           offer = false;
-          demo_state_t state;
-          demo_get(&state);
-          if (state.standalone) {
+          if (intent.standalone) {
             transaction = ((uint64_t)esp_random() << 32) | esp_random();
             install(&candidate, transaction);
           } else if (paired())
             install(&candidate, transaction);
-          else
-            say("Paired update not confirmed");
         }
       } else {
         static uint64_t polled;

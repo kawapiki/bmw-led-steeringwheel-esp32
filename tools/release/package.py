@@ -13,6 +13,8 @@ for data,name,chip in ((w,'wheel_demo',9),(g,'gateway_demo',0)):
  assert struct.unpack_from('<H',data,12)[0]==chip,'Wrong target chip'
  assert struct.unpack_from('<I',data,32)[0]==0xabcd5432,'Missing app descriptor'
  assert data[80:112].rstrip(b'\0').decode()==name,'Wrong application project'
+ marker=('BMWDEMO-ID:'+('wheel_cvs8161' if chip==9 else 'lilygo_xy32_v1_1')+':p1:c1:r1:END').encode().ljust(64,b'\0')
+ assert data.count(marker)==1,'Wrong immutable board/config/partition identity'
 payload=struct.pack('<4sIII',b'BMW1',a.release,len(w),len(g))+hashlib.sha256(w).digest()+hashlib.sha256(g).digest()+struct.pack('<IIII',1,1,1,a.app_major)
 assert len(payload)==96
 signed=payload+key.sign(payload,padding.PKCS1v15(),hashes.SHA256())

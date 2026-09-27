@@ -8,3 +8,5 @@ bool service_wifi_ready(void);
 bool service_wifi_credentials(char ssid[33], char pass[64]);
 
 void service_wifi_close(void);
+
+void service_wifi_forget(void);

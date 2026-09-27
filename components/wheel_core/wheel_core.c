@@ -110,3 +110,127 @@ bool manifest_layout_valid(const uint8_t *p, size_t n) {
   }
   return true;
 }
+
+int recovery_dispatch_accept(recovery_session_t *g, const uint8_t *p, size_t n,
+                             uint32_t nonce) {
+  if (!g || !nonce || recovery_validate(p, n, true, true, true))
+    return RECOVERY_SESSION;
+  if (g->nonce != nonce) {
+    g->nonce = nonce;
+    g->last_request = 0;
+    g->established = false;
+  }
+  uint32_t session = read_le(p + 8), request = read_le(p + 12);
+  if (session != nonce || !request)
+    return RECOVERY_SESSION;
+  if (request <= g->last_request)
+    return RECOVERY_REPLAY;
+  if (p[3] != 1 && !g->established)
+    return RECOVERY_SESSION;
+  g->last_request = request;
+  if (p[3] == 1)
+    g->established = true;
+  return RECOVERY_OK;
+}
+uint32_t update_reconcile_phase(uint32_t phase, bool pending, bool match) {
+  if (phase == UPDATE_DOWNLOADING)
+    return UPDATE_FAILED;
+  if (phase == UPDATE_BOOT_PENDING)
+    return pending ? UPDATE_BOOT_PENDING : match ? UPDATE_VALID : UPDATE_FAILED;
+  return phase;
+}
+int update_prepare(update_journal_t *j, uint32_t release, uint64_t tx,
+                   const uint8_t hash[32], uint32_t floor) {
+  if (!j || !hash || !tx || !release)
+    return RECOVERY_STATE;
+  if (j->phase == UPDATE_DOWNLOADING || j->phase == UPDATE_BOOT_PENDING)
+    return RECOVERY_BUSY;
+  if (release == floor && j->phase == UPDATE_VALID &&
+      !memcmp(j->hash, hash, 32)) {
+    j->tx = tx;
+    return RECOVERY_OK;
+  }
+  if (release <= floor)
+    return RECOVERY_STATE;
+  if (j->phase == UPDATE_PREPARED && j->tx == tx && j->release == release &&
+      !memcmp(j->hash, hash, 32))
+    return RECOVERY_OK;
+  if (j->tx == tx)
+    return RECOVERY_STATE;
+  *j = (update_journal_t){
+      .schema = 1, .phase = UPDATE_PREPARED, .release = release, .tx = tx};
+  memcpy(j->hash, hash, 32);
+  return RECOVERY_OK;
+}
+int update_coordinator_action(uint32_t phase, bool match, bool active) {
+  if (!match || phase == UPDATE_FAILED || phase == UPDATE_IDLE)
+    return 0;
+  if (phase == UPDATE_VALID)
+    return 3;
+  if (phase == UPDATE_PREPARED)
+    return 1;
+  if ((phase == UPDATE_DOWNLOADING || phase == UPDATE_BOOT_PENDING) && active)
+    return 2;
+  return 0;
+}
+bool recovery_auth_expired(bool connected, bool authenticated, uint64_t since,
+                           uint64_t now) {
+  return connected && !authenticated && now >= since && now - since >= 15000;
+}
+bool recovery_health_ready(uint64_t now, uint64_t worker, uint32_t wc,
+                           uint64_t host, uint32_t hc) {
+  return now >= 3000 && wc >= 3 && hc >= 3 && worker && host && now >= worker &&
+         now >= host && now - worker <= 500 && now - host <= 500;
+}
+bool telemetry_is_fresh(bool connected, bool compatible, uint64_t received,
+                        uint64_t now) {
+  return connected && compatible && received && now >= received &&
+         now - received <= 2500;
+}
+bool candidate_matches(uint32_t expected, const uint8_t a[32], uint32_t actual,
+                       const uint8_t b[32]) {
+  return expected && expected == actual && a && b && !memcmp(a, b, 32);
+}
+bool recovery_fragment_expire(recovery_assembly_t *s, uint64_t now) {
+  if (s && s->size && now >= s->started && now - s->started > 3000) {
+    volatile uint8_t *p = (volatile uint8_t *)s;
+    for (size_t n = 0; n < sizeof(*s); n++)
+      p[n] = 0;
+    return true;
+  }
+  return false;
+}
+unsigned update_progress_percent(uint32_t received, uint32_t total) {
+  if (!total)
+    return 0;
+  return received >= total ? 100 : (uint64_t)received * 100 / total;
+}
+bool sensor_configure(void *ctx, sensor_write_fn write, sensor_read_fn read,
+                      sensor_delay_fn delay) {
+  uint8_t value;
+  if (!write || !read || !delay || read(ctx, 0, &value) || value != 0xa0)
+    return false;
+  if (write(ctx, 0x3d, 0))
+    return false;
+  delay(ctx, 25);
+  if (read(ctx, 0x3d, &value) || value != 0)
+    return false;
+  /* m/s^2, dps, degrees, Celsius, Windows orientation convention. */
+  if (write(ctx, 0x3b, 0) || read(ctx, 0x3b, &value) || value != 0)
+    return false;
+  if (write(ctx, 0x3d, 0x0c))
+    return false;
+  delay(ctx, 25);
+  return !read(ctx, 0x3d, &value) && value == 0x0c;
+}
+
+int portal_request_accept(uint32_t previous, uint32_t incoming,
+                          bool same_payload) {
+  if (!incoming)
+    return 1;
+  if (incoming < previous)
+    return -1;
+  if (incoming == previous)
+    return same_payload ? 0 : -1;
+  return 1;
+}

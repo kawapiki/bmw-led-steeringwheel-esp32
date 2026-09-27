@@ -1,4 +1,5 @@
 """Release envelope authenticity and target checks, using actual built images."""
+import os
 import hashlib,struct,subprocess,tempfile,unittest,sys
 from pathlib import Path
 from cryptography.hazmat.primitives import hashes,serialization
@@ -26,7 +27,7 @@ class ReleaseTests(unittest.TestCase):
         key=serialization.load_pem_private_key((ROOT/'.private/release-signing.pem').read_bytes(),None)
         signature=key.sign(payload,padding.PKCS1v15(),hashes.SHA256())
         self.public.verify(signature,payload,padding.PKCS1v15(),hashes.SHA256())
-        lib=C.CDLL(str(ROOT/'.test-build/wheel_core.dll'));lib.manifest_layout_valid.argtypes=[C.c_void_p,C.c_size_t];lib.manifest_layout_valid.restype=C.c_bool
+        lib=C.CDLL(str(Path(os.environ.get('HOST_TEST_OUT',str(ROOT/'.test-build')))/'wheel_core.dll'));lib.manifest_layout_valid.argtypes=[C.c_void_p,C.c_size_t];lib.manifest_layout_valid.restype=C.c_bool
         self.assertTrue(lib.manifest_layout_valid(bytes(payload)+signature,480))
         struct.pack_into('<I',payload,88,2)
         self.assertFalse(lib.manifest_layout_valid(bytes(payload)+signature,480))
@@ -39,6 +40,14 @@ class ReleaseTests(unittest.TestCase):
     def test_binary_tamper(self):
         data=bytearray((self.output/"wheel.bin").read_bytes());data[-1]^=1
         self.assertNotEqual(hashlib.sha256(data).digest(),self.data[16:48])
+    def test_same_project_wrong_board_rejected(self):
+        image=bytearray((self.output/'wheel.bin').read_bytes())
+        marker=b'BMWDEMO-ID:wheel_cvs8161:p1:c1:r1:END'
+        offset=image.index(marker);image[offset+11]^=1
+        wrong=self.output/'wrong-board.bin';wrong.write_bytes(image)
+        result=subprocess.run([sys.executable,str(ROOT/'tools/release/package.py'),'--release','3','--wheel',str(wrong),'--gateway',str(self.output/'gateway.bin'),'--output',str(self.output/'bad-board')],capture_output=True)
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn(b'immutable board',result.stderr)
     def test_wrong_target_rejected(self):
         result=subprocess.run([sys.executable,str(ROOT/"tools/release/package.py"),"--release","3","--wheel",str(ROOT/"firmware/gateway/build/gateway_demo.bin"),"--gateway",str(ROOT/"firmware/wheel/build/wheel_demo.bin"),"--output",str(self.output/"bad")],capture_output=True)
         self.assertNotEqual(result.returncode,0)

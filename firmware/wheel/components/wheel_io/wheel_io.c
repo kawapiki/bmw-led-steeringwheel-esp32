@@ -40,7 +40,8 @@ static void input(void *a) {
     demo_get(&s);
     if (s.haptic_test) {
       demo_edit(clear_test, NULL);
-      if (!s.writing && now - starts[4] >= 100 && now - starts[0] >= 1000) {
+      if (!s.writing && !s.maintenance && now - starts[4] >= 100 &&
+          now - starts[0] >= 1000) {
         for (int j = 0; j < 4; j++)
           starts[j] = starts[j + 1];
         starts[4] = now;
@@ -61,7 +62,8 @@ static void input(void *a) {
           counts[i]++;
           down[i] = now;
           held[i] = false;
-          if (!s.writing && now - starts[4] >= 100 && now - starts[0] >= 1000) {
+          if (!s.writing && !s.maintenance && now - starts[4] >= 100 &&
+              now - starts[0] >= 1000) {
             for (int j = 0; j < 4; j++)
               starts[j] = starts[j + 1];
             starts[4] = now;
@@ -105,13 +107,14 @@ static void effects(void *a) {
     bool lit = !shift || ((demo_ms() / 125) % 2);
     for (int chain = 0; chain < 2; chain++) {
       for (int p = 0; p < 23; p++) {
-        bool on = !s.writing && lit && (mask & (1u << p));
+        bool on = !s.writing && !s.maintenance && lit && (mask & (1u << p));
         uint8_t r = p < 15 ? 0 : 25, g = p < 20 ? 25 : 0;
         if (s.led_mode) {
-          on = !s.writing && (s.led_mode == 1   ? chain == 0
-                              : s.led_mode == 2 ? chain == 1
-                              : s.led_mode == 3 ? p == (demo_ms() / 150) % 23
-                                                : true);
+          on = !s.writing && !s.maintenance &&
+               (s.led_mode == 1   ? chain == 0
+                : s.led_mode == 2 ? chain == 1
+                : s.led_mode == 3 ? p == (demo_ms() / 150) % 23
+                                  : true);
           r = s.led_mode == 4 ? 25 : r;
           g = s.led_mode == 4 ? 0 : g;
         }
