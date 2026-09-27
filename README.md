@@ -2,6 +2,43 @@
 
 Hardware reference and original firmware backup for a Chinese aftermarket BMW E90 steering-wheel display board. Custom firmware development has not started.
 
+## Hardware identification photos
+
+Photos of the wheel and board covered by this backup. Compare the PCB marking **CVS8161-332-V01-T16**, component layout, and connectors when identifying another unit; a similar-looking wheel alone does not establish hardware compatibility. Click a photo to view the original at full resolution.
+
+### Steering wheel and display board
+
+The steering wheel with the display board removed from its upper rim.
+
+![Steering wheel with the upper-rim display board removed](images/steering-wheel.jpg)
+
+Front of the curved PCB, showing the central TFT, two LED rows, and end buttons.
+
+![Front of the display board with TFT, LEDs, and buttons](images/board-front.jpg)
+
+PCB identification beside the display: **CVS8161-332-V01-T16**, **MARTIN**, **2026.4.20**.
+
+![Close-up of the PCB identification markings beside the TFT](images/board-markings.jpg)
+
+### Controller beneath the display
+
+With the TFT lifted, the ESP32-S3 and Winbond flash are visible. This photo records the component layout; it is not a connector pinout.
+
+<a href="images/esp32-and-flash.jpg"><img src="images/esp32-and-flash.jpg" alt="ESP32-S3 and Winbond flash beneath the lifted TFT display" width="560"></a>
+
+<details>
+<summary>Rear of the board, USB-C port, and connectors</summary>
+
+Rear view showing the vibration motor and the power/connector area.
+
+<a href="images/board-back.jpg"><img src="images/board-back.jpg" alt="Rear of the curved PCB with vibration motor and connector area" width="420"></a>
+
+Close-up of the USB-C port, two white connectors, and nearby power components. Connector contact order remains unverified.
+
+<a href="images/usb-and-connectors.jpg"><img src="images/usb-and-connectors.jpg" alt="Close-up of USB-C port, white connectors, and power components" width="560"></a>
+
+</details>
+
 ## Hardware
 
 | Item | Specification |
