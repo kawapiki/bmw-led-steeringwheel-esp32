@@ -40,3 +40,8 @@ Interrupted-update retry, replay/session dispatch, both-role auth deadline, boot
 ## First authorized physical bench session
 
 Source re-review of8c5fcde resolved all eight Important findings. User authorized real testing and confirmed USB-only, vehicle-disconnected setup. Both targets were flashed with hash-verified initial write sets. Both booted and authenticated BLE; one gateway-only and one wheel-only restart each recovered automatically. Three45-second capture windows recorded no panic/assert or unexpected reset. Display/peripheral observation, runtime resource/timing measurements, phone provisioning and actual OTA remain pending. See [physical bench report](2026-09-27-first-custom-bench.md). Earlier no-flash statements describe previous milestones.
+
+
+## 2026-09-28: first successful paired GitHub OTA
+
+Both physical devices installed signed system-r4 through gateway-first OTA, confirmed valid boot in their alternate slots and restored authenticated BLE. Wheel download/verification completed in49.3s. The owner confirmed menu/buttons and absence of unexpected LED flashes after the complete-frame DMA change. Earlier wheel network failures retained the running image, and retry reused the already-valid gateway without reinstalling it. Full evidence, resource limits and failed attempts are in the [paired OTA bench report](2026-09-28-paired-ota-bench.md). Deliberate failed-boot rollback, application-major mismatch recovery, endurance and vehicle qualification remain pending; successful paired OTA does not establish those tests.

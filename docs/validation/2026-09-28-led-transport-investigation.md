@@ -31,3 +31,8 @@ The first test run failed because the complete-frame backend did not yet exist. 
 DMA symbol storage is 2560 bytes; pixel storage is 144 bytes; encoder overflow is 96 bytes, plus driver/encoder bookkeeping. Compared with the old 384-byte DMA buffer and two strip objects, expect approximately 2 KiB additional memory, not a measured heap delta. The old non-DMA LED channel is released. UI timing and peak HTTPS/OTA heap must be measured by the integrator because existing TLS headroom is tight.
 
 Before declaring the reported problem fixed: build the wheel with IDF6.1, run both-chain/button/static/walking patterns while exercising BLE, Wi-Fi and HTTPS, observe at least several minutes, and test successful OTA quiescence. Record whether unexpected flashes persist, on which chain, and whether they coincide with haptic pulses. A scope/logic analyzer is needed if software mitigation does not remove the symptom; electrical supply or signal integrity is not excluded. Verify that only the selected physical chain changes during GPIO switching and check boot/startup illumination and haptics. The parent owns all device actions and commits.
+
+
+## Integrator hardware follow-up
+
+Root built/flashed the change, then exercised Wi-Fi discovery, authenticated BLE, several HTTPS downloads and successful paired r4 OTA. The owner reported no unexpected flashes initially and again after the completed OTA; menu and both buttons worked. Successful r4 capture contains no LED TX failure. This supports the mitigation on this bench; electrical root cause and long-duration absence of flicker remain unproven. See the [paired OTA report](2026-09-28-paired-ota-bench.md) for memory and boot evidence.

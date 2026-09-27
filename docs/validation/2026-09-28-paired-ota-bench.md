@@ -1,5 +1,11 @@
 # 2026-09-28 paired OTA bench validation
 
+## Final outcome: paired r4 OTA passed
+
+Both devices completed real GitHub HTTPS OTA to release4, with gateway-first authenticated sequencing, valid boot confirmation and bonded reconnect. Owner confirmed the menu and both buttons work after OTA and no unexpected LED flicker is observed. CAN remains disabled. This establishes the successful paired path and observed recovery from interrupted downloads; deliberate bad-boot rollback, mixed-application-major recovery, endurance and in-vehicle qualification remain open.
+
+Earlier pending/failure entries below are the chronological investigation, not the final outcome.
+
 ## Publication and preflight
 
 - Pushed `codex/wheel-demo` through `944cfc2`; draft PR #1 opened for review (no merge).
@@ -74,3 +80,22 @@ Private raw bench logs remain ignored under `.test-build`; never commit credenti
 - Retry permits at most two consecutive EAGAIN responses while time since last data is under30s; a blocking read can cross that threshold before it returns. Final SHA-256/signature/identity and boot validation remain mandatory.
 - Corrected Wi-Fi RX BA window to4 to match the four configured static RX buffers in both targets, per pinned IDF6.1 Kconfig recommendation. Added a build audit enforcing this relationship. This tuning and retry improve known software behavior; attribution of all RF/network stalls remains unproven.
 - Added10% progress, bytes, free/largest heap and stopped-read diagnostics. No credentials or signed download URLs are logged.
+
+
+## Successful r4 hardware run
+
+- Source `66a5887`; both target builds, image/partition/Wi-Fi configuration audit, original backup SHA, core/LED/HTTP/retry regressions and7 real-image release tests passed. Published signed `system-r4` and compared downloaded manifest/wheel/gateway SHA-256 to the local package.
+- Wheel application was USB-bootstrapped at0x20000 with the network correction; gateway remained on its previously OTA-installed r3. USB preparation is not counted as OTA.
+- Wheel boot confirmed RX BA window4 and valid ota_0 baseline. User initiated r4 through the physical menu; discovery/authentication took about23.4s for four release objects plus the empty terminal page.
+- Gateway downloaded/verified r4, rebooted into ota_0 at0x20000, passed boot self-test at4523ms, and reported `Installed release 4 successfully` at4983ms. It had been running r3 from ota_1, so this also exercised the opposite slot.
+- Wheel began its own download only afterward at130797ms. All1642192 bytes arrived by178565ms; verification/restart was logged at180100ms (49.3s from download start through validation).
+- Wheel bootloader selected ota_1 at0x620000, boot self-test passed at11210ms and `Installed release 4 successfully` was logged at12144ms. The release counter was committed only after image/boot confirmation.
+- Post-OTA gateway logs repeatedly show authenticated recovery. No panic/assert, LED TX failure or HTTP read-timeout warning occurred in this r4 capture. Earlier r3 errors remain documented above.
+- Wheel download progress samples showed34272–43292 free bytes and14336-byte largest block. Lowest observed heap minimum across discovery/transfer was9732 bytes; future UI/network growth needs renewed resource measurement. UI-loop statistics are not FPS or measured physical button latency.
+- Owner confirmed after OTA: menu works, both buttons work, no unexpected LED flashes. This is a live observation, not an electrical waveform/endurance guarantee.
+- Recovery v1 wire format, UUIDs, credentials/bond retention and original backup were preserved. No eFuse changes or vehicle CAN transmissions.
+
+Release4 wheel SHA-256: `164cab08eb9db3ae543a9a04730ff0e241160a3f6a1cf951834579750ece035f`.
+Release4 gateway SHA-256: `38c76e7b80a8309b3a2fdfa51ff25d70a13ae775f17c7d4a01dbc61201299126`.
+
+Private raw captures: `.test-build/ota-r4-COM6.log` and `ota-r4-COM7.log` (not committed).
