@@ -41,3 +41,21 @@ Private raw bench logs remain ignored under `.test-build`; never commit credenti
 - With two release objects, the full response plus TLS working memory exceeded the available allocation budget. Changed listing pagination from five objects/page to one, preserving the60-release search window, and changed unknown-length growth from doubling to1024-byte increments. The24KiB hard response bound remains.
 - Both rebuilds and image audits pass; the actual bounded-reader regression scenarios pass. Only wheel needs the additional USB bootstrap because the gateway does not enumerate releases.
 - User's first physical LED observation with complete-frame DMA: no unexpected flicker so far. This is an initial observation, not endurance or electrical validation.
+
+## r3 discovery and gateway OTA (live)
+
+- Published immutable signed `system-r3` from `838233e`; public downloads match all three local binary hashes.
+- Corrected wheel discovery fetched pages of8758,9001,8949 and2 bytes, then authenticated the manifest: `Release 3 ready. Hold K2.` Minimum observed wheel heap after HTTPS discovery:13196 bytes. This remains tight headroom, not a future resource budget.
+- User physically confirmed paired installation. Wheel logged `Gateway first; waiting for verified boot` at96950ms, with gateway download progress to100%.
+- Gateway validated its image and restarted. Boot selected `ota_1` at0x200000; at4529ms its boot self-test passed, then at4980ms it logged `Installed release 3 successfully`.
+- Wheel waited for that authenticated result and only then logged `Downloading authenticated image` at163650ms. This proves the gateway-first ordering on these devices.
+- Gateway reconnected with authenticated recovery after reboot. One early NimBLE advertising validation error (`rc=6`) was observed during bootstrap/reconnect, so these logs are not claimed entirely warning-free.
+- Wheel transfer continues. Two HTTP read-wait warnings were observed; UI task continues and progress redraws occur. Wheel success is not yet claimed.
+
+## First wheel download failed safely; retry pending
+
+- Owner reported wheel progress at32%. The transfer later emitted another HTTP read-wait/errno11 warning and logged `Update failed; confirm again to retry` at354826ms (approximately191s after wheel download start).
+- No wheel OTA reboot/slot switch occurred. Its existing ota_0 application continues running; the incomplete inactive-slot write was aborted. Gateway remains on validated release3 with authenticated recovery connection.
+- Source review confirms idempotent gateway reuse: `update_prepare` accepts the already-valid image at the installed release floor when its SHA-256 matches, rebinding the new transaction without installing again. Existing native journal tests cover this state.
+- Owner asked to recheck and confirm release3 again. End-to-end paired completion remains pending; do not label r3 fully hardware-validated yet.
+- Performance follow-up: both target defaults use4 static Wi-Fi RX buffers while IDF's default RX BA window is6. IDF6.1 Kconfig recommends static buffers >= the BA window for throughput/compatibility. This is a source-level tuning concern, not a proven cause of this timeout; no radio setting was changed during the live OTA.
