@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.22)
+set(EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_LIST_DIR}/../../components")
+include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+project(gateway_demo VERSION 0.1.0)
+if(NOT "$ENV{IDF_VERSION}" VERSION_EQUAL "6.1.0")
+ message(FATAL_ERROR "Use pinned ESP-IDF v6.1")
+endif()

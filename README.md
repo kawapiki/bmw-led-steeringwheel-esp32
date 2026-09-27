@@ -1,6 +1,16 @@
 # E90 LED/TFT steering wheel
 
-Hardware reference and original firmware backup for a Chinese aftermarket BMW E90 steering-wheel display board. Custom firmware development has not started.
+Hardware reference and original firmware backup for a Chinese aftermarket BMW E90 steering-wheel display board. Custom firmware development has started; the first build foundation is documented in [firmware/wheel](firmware/wheel/README.md). The complete demo and hardware validation are still pending.
+
+## Development planning
+
+- [First wheel demo: animations, peripherals and Wi-Fi OTA](docs/architecture/wheel-demo-v0.1.md) (Hungarian)
+- [System architecture and responsiveness targets](docs/architecture/system-design.md) (Hungarian)
+- [Shared component and communication contracts](docs/architecture/contracts.md)
+- [Nine specialized development agent roles](agents/README.md)
+- [Repository-wide agent instructions](AGENTS.md)
+
+These documents define the proposed two-device design and parallel development responsibilities. They do not claim implemented firmware, measured performance, or confirmed vehicle-bus compatibility.
 
 ## Hardware identification photos
 
@@ -50,7 +60,7 @@ Close-up of the USB-C port, two white connectors, and nearby power components. C
 | Flash | Winbond, JEDEC EF4019, 32 MiB, 3.3 V |
 | Crystal | 40 MHz |
 | Display | ST7789/ST7789VW driver, 320 × 172 |
-| LEDs | Two WS2812 chains, 24 addressed LEDs per chain |
+| LEDs | Two WS2812 chains, 24 addressed LEDs per chain; the first LED (index 0) of each chain lights a button (owner-corrected during bench testing); indices 1–23 are RPM LEDs |
 | Motion-sensor interface | BNO055, I²C address 0x28, 400 kHz |
 | USB | Native USB Serial/JTAG |
 | Secure Boot / flash encryption | Both disabled at backup time |
@@ -135,3 +145,7 @@ The original application includes LVGL, NimBLE, and ELM327 support. BLE referenc
 - BNO055 reset/interrupt/strap connections and flash-pad routing overrides.
 
 This is a firmware-derived peripheral map, not a complete PCB schematic. Unlisted GPIOs are not proven available. The backup supports software recovery on compatible, undamaged hardware; it cannot reverse eFuse changes or electrical damage.
+
+## Custom firmware demo
+
+The first custom wheel and gateway sources are in [firmware/wheel](firmware/wheel/README.md) and [firmware/gateway](firmware/gateway/README.md). Builds target ESP-IDF6.1. Hardware remains unmodified; read the [initial installation/recovery plan](docs/validation/initial-custom-flash-plan.md) before flashing. The [recovery wire candidate](docs/architecture/recovery-wire-candidate.md) is not a deployed/qualified ABI. CAN control remains disabled.

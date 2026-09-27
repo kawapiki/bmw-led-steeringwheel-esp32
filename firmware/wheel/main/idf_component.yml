@@ -1,0 +1,5 @@
+dependencies:
+  idf: "==6.1.0"
+  lvgl/lvgl: "==9.4.0"
+  espressif/led_strip: "==3.0.3"
+  espressif/cjson: "==1.7.19"

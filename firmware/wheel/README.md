@@ -1,0 +1,34 @@
+# Wheel demo firmware
+
+Build target ESP32-S3, ESP-IDF6.1, LVGL9.4.0, led_strip3.0.3 and cJSON1.7.19. The firmware now implements the LCD port, animated two-button menu, simulated RPM, LED diagnostics, finite haptics, optional BNO055, authenticated BLE, phone Wi-Fi setup and authenticated paired/standalone OTA. Both devices have been flashed and bench-tested. See [current OTA bench results](../../docs/validation/2026-09-28-paired-ota-bench.md) for exactly what passed and remains pending; in-vehicle and rollback qualification are not complete.
+
+From repository root:
+1. Run ESP-IDF Python on tools/provision-development.py to create private local signing material and initial pairing-NVS source.
+2. Run tools/build-wheel.ps1; gateway uses tools/build-gateway.ps1.
+3. Run `python tools/check-system-build.py` with the IDF Python, then `./tools/setup-host-tests.ps1 -Python python`. The helper installs pinned Zig 0.14.1 and cryptography 48.0.1 into an ignored fresh `.test-build/host-clean/deps` directory, compiles/runs the shared C tests, then runs packaging tests against both built images. No global compiler installation is needed. To repeat from another empty directory use `-Output .test-build/host-clean-2`. Manual equivalent: `python -m pip install --target .test-build/host-clean/deps ziglang==0.14.1 cryptography==48.0.1`; set `HOST_CC` to its absolute `ziglang/zig.exe`, `PYTHONPATH` to that deps directory, and `HOST_TEST_OUT` to an absolute writable test directory, then run `python tests/host/test_core.py` followed by `python tests/host/test_release.py`. Release tests require the prior DLL and built images/private development signing key.
+4. Review docs/validation/initial-custom-flash-plan.md before any hardware action.
+
+K1 short cycles pages; K2 activates page action; K1 hold returns home/cancels; K2 hold confirms a newly offered update after button release. LED page K2 cycles RPM, first chain, second chain, chasing pixel and red test. Buttons page K2 requests bounded haptic. Update mode page explicitly selects paired(default) or standalone. Update page K2 opens service AP or checks Releases. After successful Wi-Fi provisioning the worker starts a release check.
+
+Phone connects to BMW-Wheel using the random password shown on TFT, then opens http://192.168.4.1. Scan lists up to12 networks; enter SSID/password manually, including hidden SSIDs. The portal is bound logically to the AP destination, protected by the AP WPA2 password and request token, and expires after5 minutes of authenticated inactivity; it closes10 seconds after successful provisioning. Credentials persist only after confirmed association/IP and can be forgotten from the portal or the wheel Forget Wi-Fi page.
+
+UI is single-owner core1, partial RGB565 double DMA buffers(30KiB), LVGL16ms refresh target,32KiB LVGL heap. No claim of measured FPS. RMT allocation: motor48-symbol hardware pulse; both LED chains share S3's single DMA-capable TX channel sequentially, with the complete frame in a640-symbol DMA buffer; neither chain needs mid-frame refill interrupts. Initial LED limit10%. IO quiesces before OTA flash operations. Display offsets and orientation remain firmware-derived candidates in board header.
+
+Normal wheel demo does not consume CAN frames. BLE application telemetry is explicitly synthetic gateway data. Recovery is separate and remains available when application-major compatibility fails.
+
+OTA assets are release-tag system-rN with signed manifest.bin and target wheel.bin/gateway.bin. tools/release/package.py validates chip/project, hashes exact images and signs the common envelope. Public verification key is compiled in; pairing secret is only in private provisioned NVS. Never publish private provisioning images or signing keys.
+
+Hardware acceptance remains: LCD orientation/color, button polarity, motor direction/driver, LED physical order, sensor identity, pairing/reconnect, phone browsers, OTA/rollback power-fault tests, heap/latency/endurance.
+
+This initial demo uses flat diagnostic pages; dashboard hierarchy, tilt graphic and fractional LED interpolation remain visual follow-ups. Sensor units use the BNO055 Windows convention (UNIT_SEL=0); calibration order is system/gyro/accel/mag. Recovery status and boot results are displayed, but hardware timing and visual clipping need bench acceptance.
+
+
+During active phone provisioning, Update shows a Wi-Fi QR code for BMW-Wheel and the current generated WPA2 password. Scan it with the phone camera, accept joining the network, then open http://192.168.4.1. The QR joins Wi-Fi; it does not open the portal automatically. A148px LVGL QR canvas sits inside a164px white surround, with at least four quiet modules for the current16-character alphanumeric password format. It is regenerated only when the password changes and cleared when provisioning closes. If generation fails, the original manual password view remains available.
+
+QR host round-trip test (optional, requires NumPy, Pillow and zxing-cpp2.3.0): compile the firmware's actual LVGL encoder using the project's Zig: `zig cc -shared -O2 -DLV_CONF_SKIP -DLV_USE_QRCODE=1 firmware/wheel/managed_components/lvgl__lvgl/src/libs/qrcode/qrcodegen.c -o .test-build/qr-codegen.dll`, then run `python tests/host/test_wifi_qr.py`. Four sample passwords are decoded at native display size. This validates encoding and geometric margin, not actual phone-camera/panel readability. The data format follows [ZXing Wi-Fi contents](https://github.com/zxing/zxing/wiki/Barcode-Contents#wi-fi-network-config-android-ios-11).
+
+Phone network discovery: press Find networks once; the page waits for the result and fills a selectable list. Connection status uses a separate message area. If the scan fails, its error is shown and the button is re-enabled. Enter hidden network names manually. Portal behavior regression tests: `node --test tests/host/test_provision_ui.cjs`.
+
+Release-list reader regression test: `python tests/host/test_release_fetch.py` with HOST_CC pointing to the pinned Zig compiler (defaults to .test-build/host-clean/deps/ziglang/zig.exe). It compiles the production C reader into a controlled HTTP-stream harness and checks nine size/error/allocation and pre-buffered-response cases. Live TLS remains a separate bench test.
+
+Additional native regressions: `python tests/host/test_wheel_led.py` (production LED transport), `python tests/host/test_http_redirect.py` (pinned IDF request-line formatter, requires IDF_PATH or the default C:/esp/v6.1/esp-idf), and `python tests/host/test_ota_retry.py` (production OTA read/write decisions). Set HOST_CC as above. Wi-Fi static RX buffer count must cover the configured RX BA window; the build audit enforces this.

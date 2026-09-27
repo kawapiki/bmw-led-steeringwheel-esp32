@@ -1,0 +1,1 @@
+idf_component_register(SRCS "update_manager.c" INCLUDE_DIRS "include" "../../.private" REQUIRES contracts service_wifi ble_link wheel_core esp_http_client esp_https_ota app_update mbedtls nvs_flash esp_netif esp_timer esp_app_format esp_system espressif__cjson)
