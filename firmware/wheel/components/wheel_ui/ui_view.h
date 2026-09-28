@@ -4,6 +4,7 @@
 typedef struct {
   ui_nav_t nav;
   ui_reading_t reading;
+  ui_door_state_t doors;
   const char *detail, *footer, *password;
   bool writing, offer;
   unsigned progress;

@@ -1,4 +1,5 @@
 #include "wheel_ui.h"
+#include "cockpit.h"
 #include "demo.h"
 #include "display_port.h"
 #include "esp_app_desc.h"
@@ -13,6 +14,7 @@
 static ui_nav_t nav;
 static uint64_t last_ui;
 static ui_confirmation_t confirmation;
+static ui_door_state_t doors;
 static uint64_t wait_started, wait_total;
 static uint32_t flush_count;
 static void profile_display(lv_event_t *e) {
@@ -72,29 +74,42 @@ static void haptic(demo_state_t *s, void *a) {
   s->haptic_test = true;
 }
 static ui_reading_t reading(const demo_state_t *s) {
-  ui_telemetry_t t = {.secure = s->link_secure,
-                      .compatible = s->app_compatible,
-                      .valid = s->telemetry_source != DEMO_SOURCE_NONE,
-                      .demo = s->telemetry_source == DEMO_SOURCE_GATEWAY_DEMO,
-                      .fresh =
-                          !s->maintenance && !s->writing &&
-                          telemetry_is_fresh(s->link_secure, s->app_compatible,
-                                             s->telemetry_received, demo_ms()),
-                      .rpm = s->ble_rpm};
+  ui_telemetry_t t = {
+      .secure = s->link_secure,
+      .compatible = s->app_compatible,
+      .valid = s->telemetry_source != DEMO_SOURCE_NONE,
+      .demo = s->telemetry_source == DEMO_SOURCE_GATEWAY_DEMO,
+      .fresh = !s->maintenance && !s->writing &&
+               telemetry_is_fresh(s->link_secure, s->app_compatible,
+                                  s->telemetry_received, demo_ms()),
+      .rpm = s->ble_rpm,
+      .valid_fields = s->telemetry_valid & 31u,
+      .speed_dkph = s->speed_dkph,
+      .gear = s->gear,
+      .closure_open = s->closure_open,
+      .closure_known =
+          (s->telemetry_valid >> COCKPIT_CLOSURE_SHIFT) & COCKPIT_CLOSURE_MASK,
+      .coolant_c = s->coolant_c,
+      .oil_c = s->oil_c};
   return ui_reading(&t);
 }
 static void detail(const demo_state_t *s, ui_reading_t r, char *text,
                    size_t cap) {
   if (nav.screen == UI_GATEWAY) {
+    bool packet_current = r.status == UI_DATA_DEMO || r.status == UI_DATA_LIVE;
     const char *link = !s->link_secure      ? "Reconnecting"
                        : !s->app_compatible ? "Application incompatible"
-                       : r.available        ? "Authenticated / current"
+                       : packet_current     ? "Authenticated / current"
                                             : "Connected / no fresh data";
+    char rpm[16];
     if (r.available)
+      snprintf(rpm, sizeof(rpm), "%lu", (unsigned long)r.rpm);
+    else
+      strcpy(rpm, "--");
+    if (packet_current)
       snprintf(text, cap,
-               "%s\nSource: %s\nRPM %lu / age %llu ms\nCAN control disabled",
-               link, r.status == UI_DATA_DEMO ? "gateway demo" : "vehicle",
-               (unsigned long)r.rpm,
+               "%s\nSource: %s\nRPM %s / age %llu ms\nCAN control disabled",
+               link, r.status == UI_DATA_DEMO ? "gateway demo" : "vehicle", rpm,
                (unsigned long long)(demo_ms() - s->telemetry_received));
     else
       snprintf(text, cap,
@@ -150,7 +165,9 @@ static void detail(const demo_state_t *s, ui_reading_t r, char *text,
              "%s / app %s\n%s / sequence %lu\nRecovery protocol independent",
              s->link_secure ? "Bonded link" : "Disconnected",
              s->app_compatible ? "compatible" : "unknown",
-             r.available ? "CURRENT" : "NO CURRENT DATA",
+             (r.status == UI_DATA_DEMO || r.status == UI_DATA_LIVE)
+                 ? "CURRENT"
+                 : "NO CURRENT DATA",
              (unsigned long)s->ble_sequence);
     break;
   case 5:
@@ -190,13 +207,22 @@ static void run(void *a) {
   ui_view_create(lv_screen_active());
   uint64_t drawn = 0, profile_window = esp_timer_get_time(), handler_total = 0;
   uint32_t loops = 0, handler_max = 0;
+  ui_door_state_t logged_alert = {0};
   for (;;) {
     demo_state_t s;
     demo_get(&s);
+    ui_reading_t current = reading(&s);
+    ui_door_update(&doors, &current, nav.screen, s.maintenance || s.writing);
     if (!s.offer)
       ui_confirmation_show(&confirmation, NULL, demo_ms());
     demo_key_t key;
     while (xQueueReceive(demo_keys, &key, 0) == pdTRUE) {
+      if (doors.visible &&
+          (key == KEY_NEXT || key == KEY_SELECT || key == KEY_BACK)) {
+        ui_door_acknowledge(&doors);
+        drawn = 0;
+        continue;
+      }
       ui_nav_t previous = nav;
       if (key == KEY_BACK) {
         if (nav.screen == UI_DETAIL && nav.item == 0)
@@ -229,6 +255,14 @@ static void run(void *a) {
         drawn = 0;
       }
     }
+    ui_door_update(&doors, &current, nav.screen, s.maintenance || s.writing);
+    if (logged_alert.open != doors.open || logged_alert.known != doors.known ||
+        logged_alert.visible != doors.visible) {
+      ESP_LOGI("ui_alert", "open=%02x known=%02x visible=%u suppressed=%u",
+               doors.open, doors.known, doors.visible,
+               s.maintenance || s.writing);
+      logged_alert = doors;
+    }
     ui_confirmation_release(&confirmation, !s.pressed[1], demo_ms());
     if (!drawn || demo_ms() - drawn >= (s.writing ? 200 : 33)) {
       drawn = demo_ms();
@@ -248,6 +282,7 @@ static void run(void *a) {
                          : "K2 check  /  hold K1 back";
       ui_view_state_t v = {.nav = nav,
                            .reading = r,
+                           .doors = doors,
                            .detail = body,
                            .footer = hint,
                            .password = s.ap_password,
@@ -282,13 +317,16 @@ static void run(void *a) {
                (unsigned long)flush_count,
                (unsigned long)esp_get_minimum_free_heap_size());
       ESP_LOGI("ui_data",
-               "secure=%u sequence=%lu rpm=%lu source=%u age_ms=%llu",
+               "secure=%u seq=%lu rpm=%lu src=%u age=%llu valid=%03x "
+               "speed_dkph=%u gear=%02x water=%d oil=%d open=%02x",
                s.link_secure, (unsigned long)s.ble_sequence,
                (unsigned long)s.ble_rpm, s.telemetry_source,
                (unsigned long long)(s.telemetry_received &&
                                             now / 1000 >= s.telemetry_received
                                         ? now / 1000 - s.telemetry_received
-                                        : 0));
+                                        : 0),
+               s.telemetry_valid, s.speed_dkph, s.gear, s.coolant_c, s.oil_c,
+               s.closure_open);
       profile_window = esp_timer_get_time();
       handler_total = 0;
       handler_max = 0;

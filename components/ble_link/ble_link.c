@@ -1,6 +1,7 @@
 #include "ble_link.h"
 #include "demo.h"
 #include "telemetry_v1.h"
+#include "telemetry_cockpit.h"
 #include "wheel_core.h"
 
 #include "esp_random.h"
@@ -26,7 +27,11 @@ static const ble_uuid128_t app_svc = BLE_UUID128_INIT(
     0x19, 0x09, 0x90, 0xe9, 0x01, 0, 0, 0x80, 0, 0x10, 0, 0, 3, 0, 0, 0x90);
 static const ble_uuid128_t app_chr = BLE_UUID128_INIT(
     0x19, 0x09, 0x90, 0xe9, 0x01, 0, 0, 0x80, 0, 0x10, 0, 0, 4, 0, 0, 0x90);
-static uint16_t app_handle;
+static const ble_uuid128_t cockpit_chr = BLE_UUID128_INIT(
+    0x19, 0x09, 0x90, 0xe9, 0x01, 0, 0, 0x80, 0, 0x10, 0, 0, 5, 0, 0, 0x90);
+static uint16_t app_handle, cockpit_handle;
+static uint8_t cockpit_packet[COCKPIT_PACKET_SIZE];
+static bool app_cockpit;
 static uint8_t telemetry[16];
 static uint32_t telemetry_sequence;
 static telemetry_v1_tracker_t telemetry_tracker;
@@ -56,6 +61,7 @@ static void publish(demo_state_t *s, void *a) {
     s->app_compatible = false;
     s->telemetry_source = DEMO_SOURCE_NONE;
     s->telemetry_received = 0;
+    s->telemetry_valid = 0;
   }
   s->telemetry_fresh = !s->maintenance && !s->writing &&
       telemetry_is_fresh(secure, s->app_compatible,
@@ -121,6 +127,17 @@ static int app_access(uint16_t c, uint16_t h, struct ble_gatt_access_ctxt *ctx,
              ? BLE_ATT_ERR_INSUFFICIENT_RES
              : 0;
 }
+static int cockpit_access(uint16_t c, uint16_t h,
+                          struct ble_gatt_access_ctxt *ctx, void *a) {
+  (void)h; (void)a;
+  if (!authenticated(c)) return BLE_ATT_ERR_INSUFFICIENT_AUTHEN;
+  uint8_t copy[COCKPIT_PACKET_SIZE];
+  portENTER_CRITICAL(&lock);
+  memcpy(copy, cockpit_packet, sizeof(copy));
+  portEXIT_CRITICAL(&lock);
+  return os_mbuf_append(ctx->om, copy, sizeof(copy))
+             ? BLE_ATT_ERR_INSUFFICIENT_RES : 0;
+}
 static const struct ble_gatt_svc_def services[] = {
     {.type = BLE_GATT_SVC_TYPE_PRIMARY,
      .uuid = &svc.u,
@@ -138,6 +155,9 @@ static const struct ble_gatt_svc_def services[] = {
          (struct ble_gatt_chr_def[]){
              {.uuid = &app_chr.u,
               .access_cb = app_access,
+              .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_AUTHEN},
+             {.uuid = &cockpit_chr.u,
+              .access_cb = cockpit_access,
               .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_AUTHEN},
              {0}}},
     {0}};
@@ -168,6 +188,8 @@ static int chars(uint16_t c, const struct ble_gatt_error *e,
       handle = v->val_handle;
     else if (ble_uuid_cmp(&v->uuid.u, &app_chr.u) == 0)
       app_handle = v->val_handle;
+    else if (ble_uuid_cmp(&v->uuid.u, &cockpit_chr.u) == 0)
+      cockpit_handle = v->val_handle;
   } else if (e->status == BLE_HS_EDONE && !a)
     ble_gattc_disc_svc_by_uuid(c, &app_svc.u, services_found, (void *)1);
   else if (e->status == BLE_HS_EDONE && a)
@@ -217,7 +239,7 @@ static int gap(struct ble_gap_event *e, void *a) {
     app_request++;
     memset(&telemetry_tracker, 0, sizeof(telemetry_tracker));
     portEXIT_CRITICAL(&lock);
-    app_handle = 0;
+    app_handle = cockpit_handle = 0;
     handle = central ? 0 : handle;
     demo_clear(&assembly, sizeof(assembly));
     demo_edit(publish, NULL);
@@ -302,12 +324,12 @@ static void supervise(void *a) {
       }
     }
     if (!central) {
-      uint32_t now = (uint32_t)demo_ms(), t = now % 18000;
-      uint32_t rpm = t < 12000 ? 800 + t * 6200 / 12000
-                     : t < 14000 ? 7000
-                     : 7000 - (t - 14000) * 6200 / 4000;
+      uint32_t now = (uint32_t)demo_ms();
+      cockpit_sample_t sample;
+      cockpit_demo(now, &sample);
       portENTER_CRITICAL(&lock);
-      telemetry_v1_encode(telemetry, ++telemetry_sequence, rpm, now);
+      telemetry_v1_encode(telemetry, ++telemetry_sequence, sample.rpm, now);
+      cockpit_encode(cockpit_packet, telemetry_sequence, now, &sample);
       portEXIT_CRITICAL(&lock);
     }
     demo_edit(publish, NULL);
@@ -479,6 +501,21 @@ static void telemetry_state(demo_state_t *s, void *a) {
   s->telemetry_received = p->received;
   s->ble_sequence = p->sequence;
   s->ble_rpm = p->rpm;
+  s->telemetry_valid = COCKPIT_VALID_RPM;
+  s->speed_dkph = 0; s->gear = 0; s->coolant_c = s->oil_c = 0;
+  s->closure_open = 0;
+  s->telemetry_fresh = telemetry_is_fresh(true, true, p->received, demo_ms());
+}
+static void cockpit_state(demo_state_t *s, void *a) {
+  const cockpit_sample_t *p = a;
+  if (!s->link_secure || s->maintenance || s->writing) return;
+  s->app_compatible = true;
+  s->telemetry_source = DEMO_SOURCE_GATEWAY_DEMO;
+  s->telemetry_received = p->received;
+  s->ble_sequence = p->sequence; s->ble_rpm = p->rpm;
+  s->telemetry_valid = p->valid; s->speed_dkph = p->speed_dkph;
+  s->gear = p->gear; s->coolant_c = p->coolant_c; s->oil_c = p->oil_c;
+  s->closure_open = p->closure_open;
   s->telemetry_fresh = telemetry_is_fresh(true, true, p->received, demo_ms());
 }
 static void telemetry_incompatible(demo_state_t *s, void *a) {
@@ -486,31 +523,43 @@ static void telemetry_incompatible(demo_state_t *s, void *a) {
   s->app_compatible = false;
   s->telemetry_fresh = false;
   s->telemetry_source = DEMO_SOURCE_NONE;
+  s->telemetry_valid = 0;
 }
 /* Application reads have their own callback/token; they never touch the
  * recovery operation, completion semaphore or response buffers. */
 static int app_read_done(uint16_t c, const struct ble_gatt_error *e,
                          struct ble_gatt_attr *v, void *a) {
   uint32_t token = (uint32_t)(uintptr_t)a;
-  uint8_t packet[16];
+  uint8_t packet[COCKPIT_PACKET_SIZE];
   uint16_t length = 0;
   bool wire_ok = !e->status && v && v->offset == 0 &&
                  !ble_hs_mbuf_to_flat(v->om, packet, sizeof(packet), &length);
   telemetry_v1_sample_t sample;
-  bool accepted = false, incompatible = false;
+  cockpit_sample_t cockpit;
+  bool accepted = false, extended = false, incompatible = false;
   portENTER_CRITICAL(&lock);
   if (app_pending && token == app_request) {
     app_pending = false;
     if (c == conn && app_session == connection_nonce && secure && wire_ok) {
-      incompatible = length == 16 &&
-                     (packet[0] != 1 || packet[1] || packet[2] || packet[3]);
-      accepted = telemetry_v1_accept(&telemetry_tracker, app_session,
-                                    packet, length, app_requested, demo_ms(),
-                                    &sample);
+      extended = app_cockpit;
+      if (extended) {
+        incompatible = length == COCKPIT_PACKET_SIZE &&
+                       (packet[0] != 1 || packet[1] != 1);
+        accepted = cockpit_accept(&telemetry_tracker, app_session, packet,
+                                  length, app_requested, demo_ms(), &cockpit);
+      } else {
+        incompatible = length == 16 &&
+                       (packet[0] != 1 || packet[1] || packet[2] || packet[3]);
+        accepted = telemetry_v1_accept(&telemetry_tracker, app_session,
+                                      packet, length, app_requested, demo_ms(),
+                                      &sample);
+      }
     }
   }
   portEXIT_CRITICAL(&lock);
-  if (accepted)
+  if (accepted && extended)
+    demo_edit(cockpit_state, &cockpit);
+  else if (accepted)
     demo_edit(telemetry_state, &sample);
   else if (incompatible)
     demo_edit(telemetry_incompatible, NULL);
@@ -526,6 +575,7 @@ void ble_link_poll_telemetry(void) {
     return;
   uint64_t now = demo_ms();
   uint32_t token = 0;
+  uint16_t attribute = 0;
   bool expired = false;
   portENTER_CRITICAL(&lock);
   if (app_pending) {
@@ -534,13 +584,15 @@ void ble_link_poll_telemetry(void) {
     app_pending = true;
     app_requested = app_polled = now;
     app_session = connection_nonce;
+    app_cockpit = cockpit_handle != 0;
+    attribute = app_cockpit ? cockpit_handle : app_handle;
     token = ++app_request;
     if (!token) token = ++app_request;
   }
   portEXIT_CRITICAL(&lock);
   if (expired) {
     ble_gap_terminate(conn, BLE_ERR_REM_USER_CONN_TERM);
-  } else if (token && ble_gattc_read(conn, app_handle, app_read_done,
+  } else if (token && ble_gattc_read(conn, attribute, app_read_done,
                                    (void *)(uintptr_t)token)) {
     portENTER_CRITICAL(&lock);
     if (token == app_request) app_pending = false;

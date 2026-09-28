@@ -13,6 +13,7 @@ static void rpm(demo_state_t *s, void *a) {
   (void)a;
   bool valid = !s->maintenance && !s->writing &&
       s->telemetry_source != DEMO_SOURCE_NONE &&
+      (s->telemetry_valid & COCKPIT_VALID_RPM) &&
       telemetry_is_fresh(s->link_secure, s->app_compatible,
                          s->telemetry_received, demo_ms());
   s->rpm = valid ? s->ble_rpm : 0;
