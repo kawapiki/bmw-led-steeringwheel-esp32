@@ -2,6 +2,7 @@
 #include "demo.h"
 #include "telemetry_v1.h"
 #include "telemetry_cockpit.h"
+#include "telemetry_lighting.h"
 #include "wheel_core.h"
 
 #include "esp_random.h"
@@ -29,7 +30,12 @@ static const ble_uuid128_t app_chr = BLE_UUID128_INIT(
     0x19, 0x09, 0x90, 0xe9, 0x01, 0, 0, 0x80, 0, 0x10, 0, 0, 4, 0, 0, 0x90);
 static const ble_uuid128_t cockpit_chr = BLE_UUID128_INIT(
     0x19, 0x09, 0x90, 0xe9, 0x01, 0, 0, 0x80, 0, 0x10, 0, 0, 5, 0, 0, 0x90);
-static uint16_t app_handle, cockpit_handle;
+static const ble_uuid128_t lighting_chr = BLE_UUID128_INIT(
+    0x19, 0x09, 0x90, 0xe9, 0x01, 0, 0, 0x80, 0, 0x10, 0, 0, 6, 0, 0, 0x90);
+static uint16_t app_handle, cockpit_handle, lighting_handle;
+static uint8_t lighting_packet[LIGHTING_PACKET_SIZE];
+static telemetry_v1_tracker_t lighting_tracker;
+static bool app_lighting, next_lighting;
 static uint8_t cockpit_packet[COCKPIT_PACKET_SIZE];
 static bool app_cockpit;
 static uint8_t telemetry[16];
@@ -62,6 +68,11 @@ static void publish(demo_state_t *s, void *a) {
     s->telemetry_source = DEMO_SOURCE_NONE;
     s->telemetry_received = 0;
     s->telemetry_valid = 0;
+  }
+  if (!secure || s->maintenance || s->writing ||
+      !telemetry_is_fresh(true, true, s->lights_received, demo_ms())) {
+    s->lights_valid = s->lights_on = s->lights_source = 0;
+    if (!secure) s->lights_received = 0;
   }
   s->telemetry_fresh = !s->maintenance && !s->writing &&
       telemetry_is_fresh(secure, s->app_compatible,
@@ -138,6 +149,17 @@ static int cockpit_access(uint16_t c, uint16_t h,
   return os_mbuf_append(ctx->om, copy, sizeof(copy))
              ? BLE_ATT_ERR_INSUFFICIENT_RES : 0;
 }
+static int lighting_access(uint16_t c, uint16_t h,
+                          struct ble_gatt_access_ctxt *ctx, void *a) {
+  (void)h; (void)a;
+  if (!authenticated(c)) return BLE_ATT_ERR_INSUFFICIENT_AUTHEN;
+  uint8_t copy[LIGHTING_PACKET_SIZE];
+  portENTER_CRITICAL(&lock);
+  memcpy(copy, lighting_packet, sizeof(copy));
+  portEXIT_CRITICAL(&lock);
+  return os_mbuf_append(ctx->om, copy, sizeof(copy))
+             ? BLE_ATT_ERR_INSUFFICIENT_RES : 0;
+}
 static const struct ble_gatt_svc_def services[] = {
     {.type = BLE_GATT_SVC_TYPE_PRIMARY,
      .uuid = &svc.u,
@@ -158,6 +180,9 @@ static const struct ble_gatt_svc_def services[] = {
               .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_AUTHEN},
              {.uuid = &cockpit_chr.u,
               .access_cb = cockpit_access,
+              .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_AUTHEN},
+             {.uuid = &lighting_chr.u,
+              .access_cb = lighting_access,
               .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_AUTHEN},
              {0}}},
     {0}};
@@ -190,6 +215,8 @@ static int chars(uint16_t c, const struct ble_gatt_error *e,
       app_handle = v->val_handle;
     else if (ble_uuid_cmp(&v->uuid.u, &cockpit_chr.u) == 0)
       cockpit_handle = v->val_handle;
+    else if (ble_uuid_cmp(&v->uuid.u, &lighting_chr.u) == 0)
+      lighting_handle = v->val_handle;
   } else if (e->status == BLE_HS_EDONE && !a)
     ble_gattc_disc_svc_by_uuid(c, &app_svc.u, services_found, (void *)1);
   else if (e->status == BLE_HS_EDONE && a)
@@ -238,8 +265,10 @@ static int gap(struct ble_gap_event *e, void *a) {
     app_discovered = false;
     app_request++;
     memset(&telemetry_tracker, 0, sizeof(telemetry_tracker));
+    memset(&lighting_tracker, 0, sizeof(lighting_tracker));
+    next_lighting = false;
     portEXIT_CRITICAL(&lock);
-    app_handle = cockpit_handle = 0;
+    app_handle = cockpit_handle = lighting_handle = 0;
     handle = central ? 0 : handle;
     demo_clear(&assembly, sizeof(assembly));
     demo_edit(publish, NULL);
@@ -327,15 +356,18 @@ static void supervise(void *a) {
       uint32_t now = (uint32_t)demo_ms();
       cockpit_sample_t sample;
       cockpit_demo(now, &sample);
+      lighting_sample_t lights;
+      lighting_demo(now, &lights);
       portENTER_CRITICAL(&lock);
       telemetry_v1_encode(telemetry, ++telemetry_sequence, sample.rpm, now);
       cockpit_encode(cockpit_packet, telemetry_sequence, now, &sample);
+      lighting_encode(lighting_packet, telemetry_sequence, now, &lights);
       portEXIT_CRITICAL(&lock);
     }
     demo_edit(publish, NULL);
     if (central)
       ble_link_poll_telemetry();
-    vTaskDelay(pdMS_TO_TICKS(100));
+    vTaskDelay(pdMS_TO_TICKS(central && lighting_handle ? 50 : 100));
   }
 }
 void ble_link_start(bool wheel) {
@@ -510,13 +542,19 @@ static void cockpit_state(demo_state_t *s, void *a) {
   const cockpit_sample_t *p = a;
   if (!s->link_secure || s->maintenance || s->writing) return;
   s->app_compatible = true;
-  s->telemetry_source = DEMO_SOURCE_GATEWAY_DEMO;
+  s->telemetry_source = p->source == 2 ? DEMO_SOURCE_VEHICLE : DEMO_SOURCE_GATEWAY_DEMO;
   s->telemetry_received = p->received;
   s->ble_sequence = p->sequence; s->ble_rpm = p->rpm;
   s->telemetry_valid = p->valid; s->speed_dkph = p->speed_dkph;
   s->gear = p->gear; s->coolant_c = p->coolant_c; s->oil_c = p->oil_c;
   s->closure_open = p->closure_open;
   s->telemetry_fresh = telemetry_is_fresh(true, true, p->received, demo_ms());
+}
+static void lighting_state(demo_state_t *s, void *a) {
+  const lighting_sample_t *p = a;
+  if (!s->link_secure || s->maintenance || s->writing) return;
+  s->lights_valid = p->valid; s->lights_on = p->on; s->lights_source = p->source;
+  s->lights_sequence = p->sequence; s->lights_received = p->received;
 }
 static void telemetry_incompatible(demo_state_t *s, void *a) {
   (void)a;
@@ -536,15 +574,20 @@ static int app_read_done(uint16_t c, const struct ble_gatt_error *e,
                  !ble_hs_mbuf_to_flat(v->om, packet, sizeof(packet), &length);
   telemetry_v1_sample_t sample;
   cockpit_sample_t cockpit;
-  bool accepted = false, extended = false, incompatible = false;
+  lighting_sample_t lighting;
+  bool accepted = false, extended = false, lights = false, incompatible = false;
   portENTER_CRITICAL(&lock);
   if (app_pending && token == app_request) {
     app_pending = false;
     if (c == conn && app_session == connection_nonce && secure && wire_ok) {
       extended = app_cockpit;
-      if (extended) {
+      lights = app_lighting;
+      if (lights) {
+        accepted = lighting_accept(&lighting_tracker, app_session, packet,
+                                   length, app_requested, demo_ms(), &lighting);
+      } else if (extended) {
         incompatible = length == COCKPIT_PACKET_SIZE &&
-                       (packet[0] != 1 || packet[1] != 1);
+                       (packet[0] != 1 || (packet[1] != 1 && packet[1] != 2));
         accepted = cockpit_accept(&telemetry_tracker, app_session, packet,
                                   length, app_requested, demo_ms(), &cockpit);
       } else {
@@ -557,7 +600,9 @@ static int app_read_done(uint16_t c, const struct ble_gatt_error *e,
     }
   }
   portEXIT_CRITICAL(&lock);
-  if (accepted && extended)
+  if (accepted && lights)
+    demo_edit(lighting_state, &lighting);
+  else if (accepted && extended)
     demo_edit(cockpit_state, &cockpit);
   else if (accepted)
     demo_edit(telemetry_state, &sample);
@@ -580,12 +625,14 @@ void ble_link_poll_telemetry(void) {
   portENTER_CRITICAL(&lock);
   if (app_pending) {
     expired = !recovery_busy && now - app_requested > 2500;
-  } else if (!recovery_busy && now - app_polled >= 100) {
+  } else if (!recovery_busy && now - app_polled >= (lighting_handle ? 50u : 100u)) {
     app_pending = true;
     app_requested = app_polled = now;
     app_session = connection_nonce;
-    app_cockpit = cockpit_handle != 0;
-    attribute = app_cockpit ? cockpit_handle : app_handle;
+    app_lighting = lighting_handle && next_lighting;
+    next_lighting = lighting_handle && !app_lighting;
+    app_cockpit = !app_lighting && cockpit_handle != 0;
+    attribute = app_lighting ? lighting_handle : app_cockpit ? cockpit_handle : app_handle;
     token = ++app_request;
     if (!token) token = ++app_request;
   }

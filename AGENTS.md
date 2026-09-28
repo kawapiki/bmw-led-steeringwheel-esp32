@@ -28,6 +28,8 @@ New source directories listed in the roster are planned ownership boundaries; do
 
 ## Engineering rules
 
+- Permanent product boundary: the wheel runs the operational UI and never generates simulated vehicle signals. Only the gateway may substitute a CAN simulator for its vehicle backend. Simulated and vehicle-origin normalized states must have identical operational rendering, alert and input behavior; keep source provenance in Gateway/Service diagnostics, not a Demo badge on the normal dashboard. Unknown/stale remains distinct from zero/closed/off. The decorative startup scene is not telemetry simulation. See docs/architecture/operational-wheel-lighting-v1.md.
+
 - Permanent requirement: keep the OTA recovery/control protocol backward compatible and independent of application protocol compatibility. Breaking changes require explicit developer authorization. Follow `docs/architecture/ota-recovery-v1.md`; authenticated Wi-Fi credential sharing and recoverable gateway-first updates are part of the two-device architecture.
 
 - Keep BMW-specific decode logic out of the steering-wheel UI.

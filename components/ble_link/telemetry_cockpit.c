@@ -18,7 +18,7 @@ void cockpit_encode(uint8_t out[22], uint32_t seq, uint32_t uptime,
                     const cockpit_sample_t *s) {
   memset(out, 0, 22);
   out[0] = 1;
-  out[1] = 1;
+  out[1] = s->source;
   write16(out + 2, s->valid);
   write32(out + 4, seq);
   write32(out + 8, uptime);
@@ -32,8 +32,8 @@ void cockpit_encode(uint8_t out[22], uint32_t seq, uint32_t uptime,
 bool cockpit_accept(telemetry_v1_tracker_t *t, uint32_t session,
                     const uint8_t *p, size_t n, uint64_t requested,
                     uint64_t now, cockpit_sample_t *s) {
-  if (!p || !s || n != 22 || p[0] != 1 || p[1] != 1 || p[20] || p[21] ||
-      (p[19] & ~0x3f))
+  if (!p || !s || n != 22 || p[0] != 1 || (p[1] != 1 && p[1] != 2) || p[20] ||
+      p[21] || (p[19] & ~0x3f))
     return false;
   uint16_t valid = read16(p + 2), rpm = read16(p + 12), speed = read16(p + 14);
   if (valid & ~COCKPIT_VALID_ALL)
@@ -57,6 +57,7 @@ bool cockpit_accept(telemetry_v1_tracker_t *t, uint32_t session,
     return false;
   *s = (cockpit_sample_t){
       .sequence = accepted.sequence,
+      .source = p[1],
       .received = accepted.received,
       .valid = valid,
       .rpm = (valid & COCKPIT_VALID_RPM) ? rpm : 0,
@@ -70,18 +71,28 @@ bool cockpit_accept(telemetry_v1_tracker_t *t, uint32_t session,
 }
 void cockpit_demo(uint32_t now, cockpit_sample_t *s) {
   uint32_t phase = now % 60000, t = now % 18000;
-  *s = (cockpit_sample_t){.valid = COCKPIT_VALID_ALL,
+  *s = (cockpit_sample_t){.source = 1,
+                          .valid = COCKPIT_VALID_ALL,
                           .rpm = 800,
                           .gear = 0x10,
                           .coolant_c = 95 + (int16_t)((now / 5000) % 3),
                           .oil_c = 105 + (int16_t)((now / 7000) % 4)};
-  if (phase < 12000) {
-    s->closure_open = 1u << (phase / 2000);
+  if (phase < 6000)
+    return;
+  if (phase < 18000) {
+    s->closure_open = 1u << ((phase - 6000) / 2000);
     return;
   }
-  uint32_t drive = phase - 12000;
+  if (phase < 21000) {
+    s->closure_open =
+        COCKPIT_CLOSURE_FL | COCKPIT_CLOSURE_RR | COCKPIT_CLOSURE_TRUNK;
+    return;
+  }
+  if (phase < 24000)
+    return;
+  uint32_t drive = phase - 24000;
   s->speed_dkph =
-      drive < 24000 ? drive * 1300 / 24000 : (48000 - drive) * 1300 / 24000;
+      drive < 18000 ? drive * 1300 / 18000 : (36000 - drive) * 1300 / 18000;
   s->gear = 0x40 | (1 + s->speed_dkph / 240);
   s->rpm = t < 12000   ? 800 + t * 6200 / 12000
            : t < 14000 ? 7000

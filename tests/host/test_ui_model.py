@@ -30,6 +30,14 @@ int main(void) {
 
 
  t.valid=true;t.demo=false;t.rpm=0;r=ui_reading(&t);assert(r.available&&r.rpm==0&&r.status==UI_DATA_LIVE);
+ t.lights_fresh=true;t.lights_valid=0x25;t.lights_on=0xff;
+ r=ui_reading(&t);assert(r.lights_valid==0x25&&r.lights_on==0x25);
+ t.fresh=false;r=ui_reading(&t);assert(r.lights_valid==0x25); /* independent packet age */
+ t.lights_fresh=false;r=ui_reading(&t);assert(!r.lights_valid&&!r.lights_on);
+ t.lights_fresh=true;t.secure=false;r=ui_reading(&t);assert(!r.lights_valid);
+ t.secure=true;t.compatible=false;r=ui_reading(&t);assert(!r.lights_valid);
+ t.compatible=true;t.fresh=true;t.lights_on=0;
+ for(unsigned bit=0;bit<6;++bit){t.lights_valid=1u<<bit;r=ui_reading(&t);assert(r.lights_valid==(1u<<bit)&&!r.lights_on);}
  ui_confirmation_t c={0};ui_offer_t a={.generation=1,.release=5},b={.generation=2,.release=6},out={0};
  a.digest[0]=4;b.digest[0]=5;
  ui_confirmation_show(&c,&a,100);ui_confirmation_release(&c,true,120);

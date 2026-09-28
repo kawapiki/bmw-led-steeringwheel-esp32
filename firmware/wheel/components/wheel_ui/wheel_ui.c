@@ -7,6 +7,8 @@
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/task.h"
+#include "ui_vehicle_assets.h"
+#include "ui_vehicle_scene.h"
 #include "ui_view.h"
 #include "wheel_core.h"
 #include <stdio.h>
@@ -15,6 +17,7 @@ static ui_nav_t nav;
 static uint64_t last_ui;
 static ui_confirmation_t confirmation;
 static ui_door_state_t doors;
+static ui_vehicle_scene_t vehicle_scene;
 static uint64_t wait_started, wait_total;
 static uint32_t flush_count;
 static void profile_display(lv_event_t *e) {
@@ -82,6 +85,12 @@ static ui_reading_t reading(const demo_state_t *s) {
       .fresh = !s->maintenance && !s->writing &&
                telemetry_is_fresh(s->link_secure, s->app_compatible,
                                   s->telemetry_received, demo_ms()),
+      .lights_fresh = !s->maintenance && !s->writing &&
+                      (s->lights_source == 1 || s->lights_source == 2) &&
+                      telemetry_is_fresh(s->link_secure, s->app_compatible,
+                                         s->lights_received, demo_ms()),
+      .lights_valid = s->lights_valid,
+      .lights_on = s->lights_on,
       .rpm = s->ble_rpm,
       .valid_fields = s->telemetry_valid & 31u,
       .speed_dkph = s->speed_dkph,
@@ -162,13 +171,18 @@ static void detail(const demo_state_t *s, ui_reading_t r, char *text,
     break;
   case 4:
     snprintf(text, cap,
-             "%s / app %s\n%s / sequence %lu\nRecovery protocol independent",
+             "%s / app %s\n%s / sequence %lu\nLights %s known %02X on %02X\nLO "
+             "low HI high AE angel L/R turn B brake",
              s->link_secure ? "Bonded link" : "Disconnected",
              s->app_compatible ? "compatible" : "unknown",
              (r.status == UI_DATA_DEMO || r.status == UI_DATA_LIVE)
                  ? "CURRENT"
                  : "NO CURRENT DATA",
-             (unsigned long)s->ble_sequence);
+             (unsigned long)s->ble_sequence,
+             s->lights_source == 1   ? "sim"
+             : s->lights_source == 2 ? "vehicle"
+                                     : "unknown",
+             r.lights_valid, r.lights_on);
     break;
   case 5:
     snprintf(text, cap,
@@ -213,10 +227,25 @@ static void run(void *a) {
     demo_get(&s);
     ui_reading_t current = reading(&s);
     ui_door_update(&doors, &current, nav.screen, s.maintenance || s.writing);
+    bool boot = ui_vehicle_scene_step(
+        &vehicle_scene, demo_ms(),
+        s.maintenance || s.writing || s.offer || nav.screen >= UI_GATEWAY ||
+            (doors.visible && (current.status == UI_DATA_LIVE ||
+                               current.status == UI_DATA_DEMO)));
+    if (boot &&
+        !ui_vehicle_asset_valid(ui_vehicle_asset(true, vehicle_scene.frame))) {
+      ui_vehicle_scene_interrupt(&vehicle_scene);
+      boot = false;
+    }
     if (!s.offer)
       ui_confirmation_show(&confirmation, NULL, demo_ms());
     demo_key_t key;
     while (xQueueReceive(demo_keys, &key, 0) == pdTRUE) {
+      if (boot && ui_vehicle_scene_interrupt(&vehicle_scene)) {
+        boot = false;
+        drawn = 0;
+        continue;
+      }
       if (doors.visible &&
           (key == KEY_NEXT || key == KEY_SELECT || key == KEY_BACK)) {
         ui_door_acknowledge(&doors);
@@ -263,6 +292,14 @@ static void run(void *a) {
                s.maintenance || s.writing);
       logged_alert = doors;
     }
+    static uint16_t logged_lights = 0xffff;
+    uint16_t lamp_state = ((uint16_t)current.lights_valid << 8) | current.lights_on;
+    if (lamp_state != logged_lights) {
+      ESP_LOGI("ui_lights", "known=%02x on=%02x seq=%lu source=%u",
+               current.lights_valid, current.lights_on,
+               (unsigned long)s.lights_sequence, s.lights_source);
+      logged_lights = lamp_state;
+    }
     ui_confirmation_release(&confirmation, !s.pressed[1], demo_ms());
     if (!drawn || demo_ms() - drawn >= (s.writing ? 200 : 33)) {
       drawn = demo_ms();
@@ -288,7 +325,9 @@ static void run(void *a) {
                            .password = s.ap_password,
                            .writing = s.writing,
                            .offer = s.offer,
-                           .progress = s.progress};
+                           .progress = s.progress,
+                           .boot = boot,
+                           .boot_frame = vehicle_scene.frame};
       ui_view_render(&v);
       ui_offer_t shown = offer(&s);
       ui_confirmation_show(

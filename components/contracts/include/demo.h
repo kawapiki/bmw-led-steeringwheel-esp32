@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "cockpit.h"
+#include "lighting.h"
 typedef enum {
   INTENT_SERVICE,
   INTENT_CHECK,
@@ -25,6 +26,9 @@ typedef enum {
 typedef struct {
   demo_telemetry_source_t telemetry_source;
   uint16_t telemetry_valid, speed_dkph;
+  uint8_t lights_valid, lights_on, lights_source;
+  uint32_t lights_sequence;
+  uint64_t lights_received;
   uint8_t gear, closure_open;
   int16_t coolant_c, oil_c;
   uint32_t rpm, buttons[2], input_drops, flushes, flush_us, ui_period_us;

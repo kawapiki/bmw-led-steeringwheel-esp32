@@ -41,6 +41,10 @@ ui_reading_t ui_reading(const ui_telemetry_t *t) {
     r.closure_open = t->closure_open & r.closure_known;
     r.status = t->demo ? UI_DATA_DEMO : UI_DATA_LIVE;
   }
+  if (t->secure && t->compatible && t->lights_fresh) {
+    r.lights_valid = t->lights_valid & 63u;
+    r.lights_on = t->lights_on & r.lights_valid;
+  }
   return r;
 }
 

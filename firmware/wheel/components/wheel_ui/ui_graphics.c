@@ -6,11 +6,11 @@
 #define MAGENTA 0xf35ac8
 #define MUTED 0xa9b7d0
 #define AMBER 0xffc857
-static lv_obj_t *graphics[3];
+static lv_obj_t *graphics[3], *lamps;
 static ui_reading_t data;
 static ui_door_state_t doors;
 static ui_screen_t mode = (ui_screen_t)99;
-static bool overlay;
+static bool overlay, image_overlay;
 static void line(lv_layer_t *layer, int x1, int y1, int x2, int y2,
                  uint32_t color, int width) {
   lv_draw_line_dsc_t d;
@@ -59,6 +59,44 @@ static void arc(lv_layer_t *layer, int cx, int cy, int radius, int from, int to,
   d.color = lv_color_hex(color);
   d.width = width;
   lv_draw_arc(layer, &d);
+}
+static void draw_lamps(lv_event_t *e) {
+  lv_layer_t *layer = lv_event_get_layer(e);
+  lv_area_t a;
+  lv_obj_get_coords(lamps, &a);
+  for (unsigned i = 0; i < 6; ++i) {
+    int x = a.x1 + i * 37, y = a.y1;
+    bool known = (data.lights_valid & (1u << i)) != 0;
+    bool on = (data.lights_on & (1u << i)) != 0;
+    uint32_t color = !known || !on ? MUTED
+                     : i == 1      ? 0x4488ff
+                     : i == 5      ? 0xff445e
+                                   : 0x48e589;
+    if (!known)
+      color = INACTIVE;
+    if (i < 2) {
+      arc(layer, x + 9, y + 10, 7, 270, 450, color, 2);
+      line(layer, x + 9, y + 3, x + 9, y + 17, color, 2);
+      for (int row = 0; row < 3; row++)
+        line(layer, x + 1, y + 5 + row * 5, x + 6,
+             y + 5 + row * 5 + (i == 0 ? 2 : 0), color, 1);
+    } else if (i == 2) {
+      arc(layer, x + 9, y + 10, 7, 0, 360, color, 2);
+      arc(layer, x + 9, y + 10, 4, 0, 360, color, 1);
+    } else if (i == 3 || i == 4) {
+      int tip = x + (i == 3 ? 1 : 17), tail = x + (i == 3 ? 17 : 1),
+          shoulder = x + 9;
+      line(layer, tip, y + 10, tail, y + 10, color, 2);
+      line(layer, tip, y + 10, shoulder, y + 3, color, 2);
+      line(layer, tip, y + 10, shoulder, y + 17, color, 2);
+    } else {
+      arc(layer, x + 9, y + 10, 7, 0, 360, color, 2);
+      line(layer, x + 9, y + 6, x + 9, y + 11, color, 2);
+      box(layer, x + 8, y + 14, 2, 2, color);
+    }
+    if (!known)
+      text(layer, x + 21, y + 2, 12, "?", AMBER);
+  }
 }
 /* Rendering and invalidation share the same clamped, integer endpoint. */
 static int gauge_angle(uint32_t value, bool rpm) {
@@ -247,6 +285,13 @@ static void draw(lv_event_t *e) {
     sport_frame(layer, a.x1, a.y1);
 }
 void ui_graphics_create(lv_obj_t *screen) {
+  lamps = lv_obj_create(screen);
+  lv_obj_remove_style_all(lamps);
+  lv_obj_set_pos(lamps, 12, 3);
+  lv_obj_set_size(lamps, 222, 21);
+  lv_obj_remove_flag(lamps, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_event_cb(lamps, draw_lamps, LV_EVENT_DRAW_MAIN, NULL);
+  lv_obj_add_flag(lamps, LV_OBJ_FLAG_HIDDEN);
   for (unsigned i = 0; i < 3; i++) {
     graphics[i] = lv_obj_create(screen);
     lv_obj_remove_style_all(graphics[i]);
@@ -262,15 +307,18 @@ static void visible(lv_obj_t *o, bool v) {
   else
     lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
 }
-void ui_graphics_render(const ui_view_state_t *s) {
+void ui_graphics_render(const ui_view_state_t *s, bool vehicle_image) {
   bool operational = s->nav.screen == UI_ENGINE || s->nav.screen == UI_SHIFT;
-  bool changed = mode != s->nav.screen || overlay != s->doors.visible;
+  bool changed = mode != s->nav.screen || overlay != s->doors.visible ||
+                 image_overlay != vehicle_image;
   if (changed) {
+    visible(lamps, operational);
     mode = s->nav.screen;
     overlay = s->doors.visible;
+    image_overlay = vehicle_image;
     visible(graphics[0], operational && !overlay);
     visible(graphics[1], operational && !overlay);
-    visible(graphics[2], operational);
+    visible(graphics[2], operational && !(overlay && image_overlay));
     if (overlay) {
       lv_obj_set_pos(graphics[2], 153, 22);
       lv_obj_set_size(graphics[2], 167, 146);
@@ -313,6 +361,9 @@ void ui_graphics_render(const ui_view_state_t *s) {
                : validity_changed || data.coolant_c != s->reading.coolant_c ||
                      data.oil_c != s->reading.oil_c))
     lv_obj_invalidate(graphics[2]);
+  if (changed || data.lights_valid != s->reading.lights_valid ||
+      data.lights_on != s->reading.lights_on)
+    lv_obj_invalidate(lamps);
   data = s->reading;
   doors = s->doors;
 }

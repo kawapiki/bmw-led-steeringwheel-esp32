@@ -1,5 +1,6 @@
 /* Host-only LVGL framebuffer capture. Production ui_view.c is compiled
  * unchanged. */
+#include "ui_vehicle_assets.h"
 #include "ui_view.h"
 #undef NDEBUG
 #include <assert.h>
@@ -139,6 +140,118 @@ static void verify_incremental(void) {
   printf("Incremental/full LVGL pixel equivalence passed: %u cases\n",
          equivalent_cases);
 }
+
+static void asset_pixels(const lv_image_dsc_t *a, unsigned left, unsigned top) {
+  assert(ui_vehicle_asset_valid(a));
+  for (unsigned y = 0; y < UI_VEHICLE_ASSET_HEIGHT; y++)
+    for (unsigned x = 0; x < UI_VEHICLE_ASSET_WIDTH; x++) {
+      unsigned offset = (y * UI_VEHICLE_ASSET_WIDTH + x) * 2;
+      uint16_t expected =
+          a->data[offset] | ((uint16_t)a->data[offset + 1] << 8);
+      assert(pixels[(top + y) * 320 + left + x] == expected);
+    }
+}
+static void verify_source_equivalence(void) {
+  ui_view_state_t s = {.nav = {UI_ENGINE, 0},
+                       .reading = {.available = true,
+                                   .lights_valid = 63,
+                                   .lights_on = 21,
+                                   .rpm = 3500,
+                                   .speed_dkph = 1080,
+                                   .gear = 0x45,
+                                   .valid_fields = 31,
+                                   .coolant_c = 90,
+                                   .oil_c = 103}};
+  for (unsigned page = UI_ENGINE; page <= UI_SHIFT; ++page) {
+    s.nav.screen = page;
+    for (unsigned mask = 0; mask < 64; ++mask) {
+      s.doors = (ui_door_state_t){
+          .known = 63, .open = mask, .active = mask != 0, .visible = mask != 0};
+      s.reading.status = UI_DATA_DEMO;
+      ui_view_render(&s);
+      lv_refr_now(NULL);
+      memcpy(incremental_pixels, pixels, sizeof(pixels));
+      s.reading.status = UI_DATA_LIVE;
+      ui_view_render(&s);
+      lv_refr_now(NULL);
+      assert(memcmp(incremental_pixels, pixels, sizeof(pixels)) == 0);
+    }
+  }
+  s.doors.visible = false;
+  for (unsigned mask = 0; mask < 64; ++mask) {
+    s.reading.lights_valid = 63;
+    s.reading.lights_on = mask;
+    equivalent(&s, false);
+    s.reading.lights_valid = mask;
+    s.reading.lights_on &= mask;
+    equivalent(&s, false);
+  }
+  puts("Simulated/live operational pixels identical on both pages and all 64 "
+       "closure masks");
+}
+static void verify_vehicle(const char *dir) {
+  ui_view_state_t s = {.nav = {UI_ENGINE, 0},
+                       .reading = {.available = true,
+                                   .rpm = 800,
+                                   .status = UI_DATA_DEMO,
+                                   .valid_fields = 31,
+                                   .gear = 0x10,
+                                   .closure_known = 63}};
+  assert(ui_vehicle_asset(true, UI_VEHICLE_BOOT_FRAMES) == NULL);
+  assert(ui_vehicle_asset(false, UI_VEHICLE_CLOSURE_FRAMES) == NULL);
+  assert(!ui_vehicle_asset_valid(NULL));
+  lv_image_dsc_t invalid = *ui_vehicle_asset(true, 0);
+  invalid.header.stride = 1;
+  assert(!ui_vehicle_asset_valid(&invalid));
+  s.boot = true;
+  for (unsigned i = 0; i < UI_VEHICLE_BOOT_FRAMES; i++) {
+    s.boot_frame = i;
+    equivalent(&s, false);
+    asset_pixels(ui_vehicle_asset(true, i), 64, 34);
+  }
+  const unsigned frames[] = {0, 5, 12, 23, 25, 27};
+  for (unsigned i = 0; i < sizeof(frames) / sizeof(frames[0]); i++) {
+    s.boot_frame = frames[i];
+    char name[40];
+    snprintf(name, sizeof(name), "vehicle-boot-%02u", frames[i]);
+    capture(dir, name, &s);
+  }
+  s.boot = false;
+  s.doors = (ui_door_state_t){.known = 63, .active = true, .visible = true};
+  for (unsigned mask = 0; mask < 64; mask++) {
+    s.doors.open = mask;
+    equivalent(&s, false);
+    asset_pixels(ui_vehicle_asset(false, mask), 128, 48);
+  }
+  s.doors.open = 1;
+  s.doors.known = 0;
+  capture(dir, "vehicle-unknown", &s);
+  s.nav.screen = UI_DETAIL;
+  s.nav.item = 0;
+  s.doors.visible = false;
+  s.password = "abcdefghjkmnpqrs";
+  capture(dir, "vehicle-to-qr", &s);
+  s.password = "";
+  s.nav.screen = UI_ENGINE;
+  s.boot = true;
+  s.boot_frame = UI_VEHICLE_BOOT_FRAMES;
+  equivalent(&s, false); /* invalid asset index falls back to instruments */
+  s.boot_frame = 0;
+  s.nav.screen = UI_DETAIL;
+  s.nav.item = 0;
+  s.password = "abcdefghjkmnpqrs";
+  equivalent(&s, false); /* service wins even if adapter supplies boot=true */
+  capture(dir, "vehicle-service-preempts", &s);
+  s.boot = false;
+  equivalent(&s, false);
+  memcpy(incremental_pixels, pixels, sizeof(pixels));
+  s.boot = true;
+  ui_view_render(&s);
+  lv_refr_now(NULL);
+  assert(memcmp(incremental_pixels, pixels, sizeof(pixels)) == 0);
+  puts(
+      "All 28 boot and 64 closure images match embedded RGB565 pixels exactly");
+}
 int main(int argc, char **argv) {
   assert(argc == 2);
   lv_init();
@@ -196,7 +309,8 @@ int main(int argc, char **argv) {
   s.nav.screen = UI_GATEWAY;
   s.detail = "Authenticated / current\nSource: gateway demo\nRPM 4321 / age 74 "
              "ms\nCAN control disabled";
-  s.reading = (ui_reading_t){true, 4321, UI_DATA_DEMO};
+  s.reading =
+      (ui_reading_t){.available = true, .rpm = 4321, .status = UI_DATA_DEMO};
   s.footer = "K1 next  /  hold K1 home";
   capture(argv[1], "gateway", &s);
   s.nav.screen = UI_SERVICE;
@@ -227,6 +341,43 @@ int main(int argc, char **argv) {
   s.detail = "Wi-Fi connected\nRelease response no memory\n0% / installed 4";
   s.footer = "K2 retry  /  hold K1 back";
   capture(argv[1], "update-error", &s);
+  s = (ui_view_state_t){.nav = {UI_ENGINE, 0},
+                        .reading = {.status = UI_DATA_LIVE,
+                                    .valid_fields = 31,
+                                    .rpm = 3500,
+                                    .speed_dkph = 1080,
+                                    .gear = 0x45,
+                                    .lights_valid = 63,
+                                    .lights_on = 21}};
+  capture(argv[1], "lighting-mixed", &s);
+  s.reading.lights_valid = 9;
+  s.reading.lights_on = 8;
+  capture(argv[1], "lighting-partial", &s);
+  s.reading.lights_valid = 0;
+  s.reading.lights_on = 0;
+  capture(argv[1], "lighting-unknown", &s);
+  s.doors = (ui_door_state_t){
+      .active = true, .acknowledged = true, .known = 63, .open = 1};
+  s.reading.status = UI_DATA_DEMO;
+  capture(argv[1], "closure-acknowledged", &s);
+  memcpy(incremental_pixels, pixels, sizeof(pixels));
+  s.reading.status = UI_DATA_LIVE;
+  ui_view_render(&s);
+  lv_refr_now(NULL);
+  assert(memcmp(incremental_pixels, pixels, sizeof(pixels)) == 0);
+  s.doors.active = false;
+  ui_view_render(&s);
+  lv_refr_now(NULL);
+  bool marker_changed = false;
+  for (unsigned y = 8; y < 24; ++y)
+    for (unsigned x = 240; x < 308; ++x)
+      marker_changed |= incremental_pixels[y * 320 + x] != pixels[y * 320 + x];
+  assert(marker_changed); /* acknowledged opening leaves a visible marker */
+  s.doors.active = true;
+  s.doors.known = 0;
+  capture(argv[1], "closure-acknowledged-unknown", &s);
+  verify_source_equivalence();
+  verify_vehicle(argv[1]);
   verify_incremental();
   lv_mem_monitor_t m;
   lv_mem_monitor(&m);

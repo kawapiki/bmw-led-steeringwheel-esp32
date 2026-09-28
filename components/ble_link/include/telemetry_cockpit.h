@@ -6,7 +6,7 @@ typedef struct {
   uint32_t sequence;
   uint64_t received;
   uint16_t valid, rpm, speed_dkph;
-  uint8_t gear, closure_open;
+  uint8_t source, gear, closure_open;
   int16_t coolant_c, oil_c;
 } cockpit_sample_t;
 void cockpit_encode(uint8_t out[COCKPIT_PACKET_SIZE], uint32_t sequence,

@@ -23,7 +23,8 @@ enum {
   UI_VALID_OIL = 16u
 };
 typedef struct {
-  bool secure, compatible, valid, demo, fresh;
+  bool secure, compatible, valid, demo, fresh, lights_fresh;
+  uint8_t lights_valid, lights_on;
   uint32_t rpm;
   uint16_t valid_fields, speed_dkph;
   uint8_t gear, closure_open, closure_known;
@@ -39,6 +40,7 @@ typedef enum {
 } ui_data_status_t;
 typedef struct {
   bool available;
+  uint8_t lights_valid, lights_on;
   uint32_t rpm;
   ui_data_status_t status;
   uint16_t valid_fields, speed_dkph;

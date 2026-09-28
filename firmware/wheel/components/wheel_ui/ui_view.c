@@ -1,5 +1,6 @@
 #include "ui_view.h"
 #include "ui_graphics.h"
+#include "ui_vehicle_assets.h"
 #include <stdio.h>
 #include <string.h>
 #define BG 0x090d1c
@@ -11,7 +12,9 @@
 static lv_obj_t *title, *badge, *body, *bar, *footer, *value, *unit,
     *provenance;
 static lv_obj_t *gear_value, *gear_unit, *rpm_unit, *coolant, *oil;
-static bool last_overlay;
+static bool last_overlay, last_boot, last_vehicle_image, last_retained_alert;
+static lv_obj_t *vehicle_image;
+static const lv_image_dsc_t *last_vehicle_asset;
 static lv_obj_t *rows[3], *selection, *qr_frame, *qr, *topline, *bottomline;
 static ui_screen_t last_screen = (ui_screen_t)99;
 static unsigned last_item = 99;
@@ -61,6 +64,8 @@ void ui_view_create(lv_obj_t *screen) {
   lv_obj_set_style_text_font(screen, &lv_font_montserrat_14, 0);
   lv_obj_remove_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
   ui_graphics_create(screen);
+  vehicle_image = lv_image_create(screen);
+  show(vehicle_image, false);
   topline = rect(screen, 12, 33, 296, 1, 0x26304b);
   bottomline = rect(screen, 12, 146, 296, 1, 0x26304b);
   title = label(screen, 12, 8, 230, FG);
@@ -145,14 +150,38 @@ static void position(lv_obj_t *o, int x, int y, int width,
   lv_obj_set_style_text_align(o, align, 0);
 }
 void ui_view_render(const ui_view_state_t *s) {
-  bool drive = s->nav.screen == UI_ENGINE, sport = s->nav.screen == UI_SHIFT,
-       operational = drive || sport;
-  bool menu = s->nav.screen == UI_MENU,
+  const lv_image_dsc_t *asset = NULL;
+  bool intro_allowed =
+      s->boot && !s->writing && !s->offer &&
+      (s->nav.screen == UI_ENGINE || s->nav.screen == UI_SHIFT);
+  if (s->boot) {
+    if (intro_allowed && s->boot_frame < UI_VEHICLE_BOOT_FRAMES)
+      asset = ui_vehicle_asset(true, s->boot_frame);
+  } else if (s->doors.visible) {
+    asset = ui_vehicle_asset(false, s->doors.open & 63u);
+  }
+  if (!ui_vehicle_asset_valid(asset))
+    asset = NULL;
+  bool boot = s->boot && asset, has_vehicle = asset != NULL;
+  bool drive = s->nav.screen == UI_ENGINE, sport = s->nav.screen == UI_SHIFT;
+  bool operational = (drive || sport) && !boot;
+  bool menu = s->nav.screen == UI_MENU && !boot,
        update = s->nav.screen == UI_DETAIL && s->nav.item == 0;
-  bool use_qr = update_qr(s), door = s->doors.visible;
+  bool use_qr = update_qr(s), door = s->doors.visible && !boot;
   bool changed = last_screen != s->nav.screen || last_item != s->nav.item ||
-                 qr_layout != use_qr || last_overlay != door;
-  ui_graphics_render(s);
+                 qr_layout != use_qr || last_overlay != door ||
+                 last_boot != boot || last_vehicle_image != has_vehicle;
+  ui_view_state_t graphics_state = *s;
+  if (boot) {
+    graphics_state.nav.screen = UI_SERVICE;
+    graphics_state.doors.visible = false;
+  }
+  ui_graphics_render(&graphics_state, has_vehicle && !boot);
+  show(vehicle_image, has_vehicle);
+  if (asset != last_vehicle_asset) {
+    lv_image_set_src(vehicle_image, asset);
+    last_vehicle_asset = asset;
+  }
   if (changed) {
     lv_anim_delete(rows[1], slide);
     lv_obj_set_x(rows[1], 26);
@@ -174,29 +203,30 @@ void ui_view_render(const ui_view_state_t *s) {
     show(gear_unit, operational);
     show(coolant, operational && !door);
     show(oil, operational && !door);
-    show(body, door || (!operational && !menu));
+    show(body, !boot && (door || (!operational && !menu)));
     show(selection, menu);
     for (unsigned i = 0; i < 3; i++)
       show(rows[i], menu);
     show(qr_frame, use_qr);
-    show(topline, !use_qr && !operational);
-    show(bottomline, !use_qr && !operational);
-    show(badge, !use_qr);
+    show(topline, !boot && !use_qr && !operational);
+    show(bottomline, !boot && !use_qr && !operational);
+    show(badge, !boot && !use_qr);
     show(footer, !operational || door);
     lv_obj_set_pos(title, use_qr ? 173 : 12, 8);
     lv_obj_set_width(title, use_qr ? 147 : 220);
     lv_obj_set_pos(body, use_qr ? 173 : 12, door ? 30 : 44);
-    lv_obj_set_width(body, use_qr ? 147 : door ? 140 : 296);
+    lv_obj_set_width(body, use_qr ? 147 : door ? 116 : 296);
     lv_obj_set_style_max_height(body, use_qr ? 101 : door ? 36 : 96, 0);
     lv_obj_set_pos(footer, use_qr ? 173 : 12, 153);
-    lv_obj_set_width(footer, use_qr ? 147 : door ? 140 : 296);
+    lv_obj_set_width(footer, use_qr ? 147 : door ? 116 : 296);
     lv_obj_set_pos(bar, 12, 125);
     lv_obj_set_size(bar, 296, 10);
     lv_bar_set_range(bar, 0, 100);
+    lv_obj_set_pos(vehicle_image, boot ? 64 : 128, boot ? 34 : 48);
     if (door) {
-      position(value, 12, 64, 130, &lv_font_montserrat_40, LV_TEXT_ALIGN_LEFT);
+      position(value, 12, 64, 110, &lv_font_montserrat_40, LV_TEXT_ALIGN_LEFT);
       position(unit, 12, 107, 100, &lv_font_montserrat_14, LV_TEXT_ALIGN_LEFT);
-      position(gear_value, 70, 120, 60, &lv_font_montserrat_28,
+      position(gear_value, 65, 120, 55, &lv_font_montserrat_28,
                LV_TEXT_ALIGN_LEFT);
       position(gear_unit, 12, 128, 50, &lv_font_montserrat_14,
                LV_TEXT_ALIGN_LEFT);
@@ -230,9 +260,13 @@ void ui_view_render(const ui_view_state_t *s) {
     last_item = s->nav.item;
     qr_layout = use_qr;
     last_overlay = door;
+    last_boot = boot;
+    last_vehicle_image = has_vehicle;
   }
+  show(title, !operational);
   show(bar, update && s->writing && !use_qr);
-  text(title, operational
+  text(title, boot ? "E90"
+              : operational
                   ? (door              ? "Vehicle alert"
                      : s->doors.active ? (drive ? "Drive / Closure alert"
                                                 : "Sport / Closure alert")
@@ -247,7 +281,19 @@ void ui_view_render(const ui_view_state_t *s) {
                       : s->reading.status == UI_DATA_INVALID      ? "No data"
                       : s->reading.status == UI_DATA_DEMO         ? "Demo"
                                                                   : "Live";
-  text(badge, s->nav.screen <= UI_GATEWAY ? state : update ? "OTA" : "Tools");
+  bool retained_alert = operational && s->doors.active && !s->doors.visible;
+  if (last_retained_alert != retained_alert) {
+    lv_obj_set_style_text_color(badge,
+                                lv_color_hex(retained_alert ? AMBER : FG), 0);
+    last_retained_alert = retained_alert;
+  }
+  text(badge, retained_alert ? (s->doors.known == 63 ? "Open!" : "Open?")
+              : operational && (s->reading.status == UI_DATA_DEMO ||
+                                s->reading.status == UI_DATA_LIVE)
+                  ? ""
+              : s->nav.screen <= UI_GATEWAY ? state
+              : update                      ? "OTA"
+                                            : "Tools");
   if (operational) {
     char number[32], gear[4];
     if (s->reading.valid_fields & UI_VALID_SPEED)
@@ -279,16 +325,16 @@ void ui_view_render(const ui_view_state_t *s) {
       const char *message = "Multiple open";
       switch (s->doors.open) {
       case 1:
-        message = "Front left open";
+        message = "Front left\nopen";
         break;
       case 2:
-        message = "Front right open";
+        message = "Front right\nopen";
         break;
       case 4:
-        message = "Rear left open";
+        message = "Rear left\nopen";
         break;
       case 8:
-        message = "Rear right open";
+        message = "Rear right\nopen";
         break;
       case 16:
         message = "Trunk open";
@@ -325,5 +371,8 @@ void ui_view_render(const ui_view_state_t *s) {
   if (update && s->writing)
     lv_bar_set_value(bar, s->progress, LV_ANIM_OFF);
   if (!door)
-    text(footer, use_qr ? "Hold K1: back" : s->footer ? s->footer : "");
+    text(footer, boot        ? "K1 / K2: skip intro"
+                 : use_qr    ? "Hold K1: back"
+                 : s->footer ? s->footer
+                             : "");
 }

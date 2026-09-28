@@ -11,7 +11,7 @@ Existing application service remains unchanged. Existing characteristic selector
 | Offset | Bytes | Meaning |
 |---|---:|---|
 |0|1|Extension version1|
-|1|1|Source1 = gateway demo; other sources rejected in this increment|
+|1|1|Source1 = simulated gateway,2 = vehicle backend; other sources rejected|
 |2|2|Validity bitmap, bits0–10 below; remaining bits zero|
 |4|4|Monotonic sequence, wrapping uint32|
 |8|4|Gateway uptime milliseconds, wrapping uint32|

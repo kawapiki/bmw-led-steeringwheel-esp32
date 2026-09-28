@@ -6,7 +6,8 @@ typedef struct {
   ui_reading_t reading;
   ui_door_state_t doors;
   const char *detail, *footer, *password;
-  bool writing, offer;
+  bool writing, offer, boot;
+  unsigned boot_frame;
   unsigned progress;
 } ui_view_state_t;
 void ui_view_create(lv_obj_t *screen);
