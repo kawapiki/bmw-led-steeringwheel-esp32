@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / 'assets/ui/e90/prepared.blend'
 HEADER = ROOT / 'firmware/wheel/components/wheel_ui/e90_mesh.h'
 MANIFEST = ROOT / 'docs/design/e90-closure-camera/mesh-manifest.json'
-MAX_TRIANGLES = 2500
+MAX_TRIANGLES = 3100
 source_hash = hashlib.sha256(SOURCE.read_bytes()).hexdigest()
 GROUPS = {'door_1': 1, 'door_2': 2, 'door_4': 3, 'door_8': 4,
           'panel_16': 5, 'panel_32': 6}
@@ -145,7 +145,7 @@ for original in list(bpy.data.objects):
     count = len(obj.data.loop_triangles)
     group = group_for(original)
     names = {m.name for m in obj.data.materials if m}
-    weight = .28 if original.name.startswith('Circle.00') and original.parent and original.parent.name.startswith('Wheel pivot') else 1.0
+    weight = .70 if original.name.startswith('Circle.00') and original.parent and original.parent.name.startswith('Wheel pivot') else 1.0
     if group in (7, 8):
         weight = .13
     if 'Dark tinted glass' in names:
@@ -243,7 +243,7 @@ manifest = {
     'materials': {'0': 'other', '1': 'black body paint', '2': 'dark tinted glass'},
     'material_counts': dict(sorted(Counter(m for _, _, _, m in triangles).items())),
     'paint_base_srgb': [.14, .15, .16],
-    'simplification': 'Per-object Blender collapse decimation, weighted lower for wheels/illustrative lamps, higher for windows; binary-searched total budget; source badge meshes replaced by 160 explicitly reserved roundel triangles; all other objects and closure groups retained.',
+    'simplification': 'Per-object Blender collapse decimation, weighted moderately for wheels and lower for illustrative lamps, higher for windows; binary-searched total budget; source badge meshes replaced by 160 explicitly reserved roundel triangles; all other objects and closure groups retained.',
     'color': 'RGB565 base material/UV samples; body paint near-black sRGB (.14,.15,.16). Explicit per-face material ID allows runtime metallic/clearcoat lighting; material does not change geometry.',
     'rest_reset': 'Vehicle motion root translation/rotation/scale; six closure pivot rotations; wheel pivot rotations; scene animation cleared in memory.',
     'limitations': 'Simplified community model; not measured BMW geometry. Fine texture detail approximated by flat per-face colors. Hood/trunk roundels are exaggerated geometric derivatives (chrome outline, black ring, blue/white center), not readable lettering. No device performance claim.',
