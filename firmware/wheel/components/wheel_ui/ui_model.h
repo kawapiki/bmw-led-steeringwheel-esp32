@@ -4,6 +4,7 @@
 typedef enum {
   UI_ENGINE,
   UI_SHIFT,
+  UI_VEHICLE,
   UI_GATEWAY,
   UI_SERVICE,
   UI_MENU,

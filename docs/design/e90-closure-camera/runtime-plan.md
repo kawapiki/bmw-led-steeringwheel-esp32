@@ -1,4 +1,4 @@
-# E90 model presentation — bounded runtime
+# E90 model presentation â€” bounded runtime
 
 Implemented in the UI component; host tests below are evidence for rendering and state logic only. Device timing, linked firmware size and OTA memory qualification remain integrator tasks. Cockpit v1 and permanent OTA recovery v1 are unchanged.
 
@@ -22,7 +22,7 @@ No PNG decoder, canvas, new framebuffer, image scaling or runtime mesh is introd
 
 ## Playback and priority
 
-The approved target is20fps: one of28frames every50ms, total1.4seconds. Frames0–5 roll in with wheel spin;6–23 orbit;24–27 show the final front lighting effect. This is a target cadence, not measured display FPS. The headlamp flash is decorative intro content, never live lamp telemetry. Live lighting uses the independent lighting-v1 characteristic and header icons.
+The approved target is20fps: one of28frames every50ms, total1.4seconds. Frames0â€“5 roll in with wheel spin;6â€“23 orbit;24â€“27 show the final front lighting effect. This is a target cadence, not measured display FPS. The headlamp flash is decorative intro content, never live lamp telemetry. Live lighting uses the independent lighting-v1 characteristic and header icons.
 
 Selection is elapsed/50, with missed frames skipped and at most one source change per UI iteration. Only the image region invalidates between frames. No catch-up burst or blocking playback loop is used. A192x104 frame has a7.99ms pixel-wire lower bound at40MHz SPI; actual rendering, transfer and scheduling must be measured.
 

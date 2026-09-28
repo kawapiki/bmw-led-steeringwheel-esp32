@@ -12,6 +12,7 @@ source.write_text(r'''
 int main(void) {
  ui_nav_t n={0};
  ui_nav_key(&n,UI_NEXT);assert(n.screen==UI_SHIFT);
+ ui_nav_key(&n,UI_NEXT);assert(n.screen==UI_VEHICLE);
  ui_nav_key(&n,UI_NEXT);assert(n.screen==UI_GATEWAY);
  ui_nav_key(&n,UI_NEXT);assert(n.screen==UI_SERVICE);
  ui_nav_key(&n,UI_SELECT);assert(n.screen==UI_MENU);

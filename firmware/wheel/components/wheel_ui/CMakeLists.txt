@@ -1,1 +1,1 @@
-idf_component_register(SRCS "wheel_ui.c" "ui_model.c" "ui_view.c" "ui_graphics.c" "ui_vehicle_scene.c" "ui_vehicle_assets.c" EMBED_FILES "ui_vehicle_frames.bin" INCLUDE_DIRS "include" REQUIRES esp_app_format wheel_core contracts display_port lvgl esp_system)
+idf_component_register(SRCS "wheel_ui.c" "ui_model.c" "ui_view.c" "ui_graphics.c" "ui_vehicle_scene.c" "vehicle_3d.cpp" INCLUDE_DIRS "include" REQUIRES esp_app_format wheel_core contracts display_port lvgl esp_system esp_timer esp_psram tgx)

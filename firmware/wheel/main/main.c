@@ -1,6 +1,7 @@
 #include "ble_link.h"
 #include "demo.h"
 #include "esp_system.h"
+#include "esp_heap_caps.h"
 #include "freertos/task.h"
 #include "motion.h"
 #include "nvs_flash.h"
@@ -29,7 +30,7 @@ static void source(void *a) {
   demo_get(&s);
   update_boot_validate(s.flushes > 0 && demo_ms() - s.input_heartbeat < 100 &&
                        demo_ms() - s.ui_heartbeat < 100 &&
-                       esp_get_free_heap_size() > 20000);
+                       heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) > 20000);
   for (;;) {
     demo_edit(rpm, NULL);
     vTaskDelay(pdMS_TO_TICKS(20));

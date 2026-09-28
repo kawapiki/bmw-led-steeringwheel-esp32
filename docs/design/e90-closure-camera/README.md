@@ -29,3 +29,7 @@ Runtime policy tests, real LVGL image rendering, flash fit, heap behavior and ph
 The owner subsequently asked whether a real3D renderer would be preferable. It is the recommended direction for continuous camera motion and independently articulated lights/panels; this frame atlas is a tested fallback/prototype, not a claim that runtime3D has been implemented. The modified Blender model can be simplified and exported to a bounded mesh. Evaluate TGX with a small RGB565 viewport and depth buffer, verify the board's PSRAM configuration, and measure input/BLE/LED behavior before replacing the renderer. Do not infer FPS from desktop tests or allocate a full scene buffer in the remaining TLS heap.
 
 The operational wheel versus gateway-simulator boundary is renderer-independent and is fixed by docs/architecture/operational-wheel-lighting-v1.md. Vehicle lighting received over BLE must drive the wheel presentation directly; decorative boot lamps must never be confused with actual received lamp state.
+
+## Runtime3D implementation
+
+The wheel now links TGX1.1.4 and the2498-triangle `e90_mesh.h` exported by `tools/assets/export_e90_mesh.py`; the frame atlas is not linked. See [runtime3D architecture](../../architecture/runtime3d-v1.md). Source/model attribution remains unchanged. Dynamic camera, panel transforms, wheel rotation and normalized lamp states replace frame selection.

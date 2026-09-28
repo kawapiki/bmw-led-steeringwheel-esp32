@@ -3,11 +3,11 @@
 #include "demo.h"
 #include "display_port.h"
 #include "esp_app_desc.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/task.h"
-#include "ui_vehicle_assets.h"
 #include "ui_vehicle_scene.h"
 #include "ui_view.h"
 #include "wheel_core.h"
@@ -232,8 +232,7 @@ static void run(void *a) {
         s.maintenance || s.writing || s.offer || nav.screen >= UI_GATEWAY ||
             (doors.visible && (current.status == UI_DATA_LIVE ||
                                current.status == UI_DATA_DEMO)));
-    if (boot &&
-        !ui_vehicle_asset_valid(ui_vehicle_asset(true, vehicle_scene.frame))) {
+    if (boot && !ui_view_vehicle_ready()) {
       ui_vehicle_scene_interrupt(&vehicle_scene);
       boot = false;
     }
@@ -293,7 +292,8 @@ static void run(void *a) {
       logged_alert = doors;
     }
     static uint16_t logged_lights = 0xffff;
-    uint16_t lamp_state = ((uint16_t)current.lights_valid << 8) | current.lights_on;
+    uint16_t lamp_state =
+        ((uint16_t)current.lights_valid << 8) | current.lights_on;
     if (lamp_state != logged_lights) {
       ESP_LOGI("ui_lights", "known=%02x on=%02x seq=%lu source=%u",
                current.lights_valid, current.lights_on,
@@ -327,7 +327,9 @@ static void run(void *a) {
                            .offer = s.offer,
                            .progress = s.progress,
                            .boot = boot,
-                           .boot_frame = vehicle_scene.frame};
+                           .maintenance = s.maintenance,
+                           .now_ms = demo_ms(),
+                           .boot_progress = vehicle_scene.progress};
       ui_view_render(&v);
       ui_offer_t shown = offer(&s);
       ui_confirmation_show(
@@ -348,13 +350,19 @@ static void run(void *a) {
       ESP_LOGI("ui_perf",
                "page=%u item=%u loops=%lu period_avg_us=%llu "
                "handler_avg_us=%llu handler_max_us=%lu "
-               "flush_wait_total_us=%llu flushes=%lu heap_min=%lu",
+               "flush_wait_total_us=%llu flushes=%lu heap_min=%lu "
+               "internal_heap_min=%lu internal_largest=%lu stack_free=%lu",
                nav.screen, nav.item, (unsigned long)loops,
                (unsigned long long)((now - profile_window) / loops),
                (unsigned long long)(handler_total / loops),
                (unsigned long)handler_max, (unsigned long long)wait_total,
                (unsigned long)flush_count,
-               (unsigned long)esp_get_minimum_free_heap_size());
+               (unsigned long)esp_get_minimum_free_heap_size(),
+               (unsigned long)heap_caps_get_minimum_free_size(
+                   MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+               (unsigned long)heap_caps_get_largest_free_block(
+                   MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+               (unsigned long)uxTaskGetStackHighWaterMark(NULL));
       ESP_LOGI("ui_data",
                "secure=%u seq=%lu rpm=%lu src=%u age=%llu valid=%03x "
                "speed_dkph=%u gear=%02x water=%d oil=%d open=%02x",

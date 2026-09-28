@@ -1,12 +1,13 @@
 /* Host-only LVGL framebuffer capture. Production ui_view.c is compiled
  * unchanged. */
-#include "ui_vehicle_assets.h"
 #include "ui_view.h"
+#include "vehicle_3d.h"
 #undef NDEBUG
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+static uint64_t test_clock;
 static uint16_t pixels[320 * 172];
 static uint8_t drawbuf[15360];
 static uint32_t flushed_pixels;
@@ -21,6 +22,13 @@ static void flush(lv_display_t *d, const lv_area_t *a, uint8_t *p) {
   lv_display_flush_ready(d);
 }
 static void capture(const char *dir, const char *name, ui_view_state_t *s) {
+  if ((s->doors.visible || s->nav.screen == UI_VEHICLE) && !s->boot) {
+    for (unsigned i = 0; i < 40; ++i) {
+      s->now_ms = (test_clock += 50);
+      ui_view_render(s);
+      lv_refr_now(NULL);
+    }
+  }
   ui_view_render(s);
   lv_tick_inc(200);
   lv_timer_handler();
@@ -141,16 +149,6 @@ static void verify_incremental(void) {
          equivalent_cases);
 }
 
-static void asset_pixels(const lv_image_dsc_t *a, unsigned left, unsigned top) {
-  assert(ui_vehicle_asset_valid(a));
-  for (unsigned y = 0; y < UI_VEHICLE_ASSET_HEIGHT; y++)
-    for (unsigned x = 0; x < UI_VEHICLE_ASSET_WIDTH; x++) {
-      unsigned offset = (y * UI_VEHICLE_ASSET_WIDTH + x) * 2;
-      uint16_t expected =
-          a->data[offset] | ((uint16_t)a->data[offset + 1] << 8);
-      assert(pixels[(top + y) * 320 + left + x] == expected);
-    }
-}
 static void verify_source_equivalence(void) {
   ui_view_state_t s = {.nav = {UI_ENGINE, 0},
                        .reading = {.available = true,
@@ -167,6 +165,7 @@ static void verify_source_equivalence(void) {
     for (unsigned mask = 0; mask < 64; ++mask) {
       s.doors = (ui_door_state_t){
           .known = 63, .open = mask, .active = mask != 0, .visible = mask != 0};
+      s.now_ms = (test_clock += 50);
       s.reading.status = UI_DATA_DEMO;
       ui_view_render(&s);
       lv_refr_now(NULL);
@@ -178,6 +177,17 @@ static void verify_source_equivalence(void) {
     }
   }
   s.doors.visible = false;
+  s.doors.active = false;
+  s.reading.lights_valid = 63;
+  s.reading.lights_on = 0;
+  ui_view_render(&s);
+  lv_refr_now(NULL);
+  memcpy(incremental_pixels, pixels, sizeof(pixels));
+  s.reading.lights_on = 63;
+  ui_view_render(&s);
+  lv_refr_now(NULL);
+  assert(!memcmp(incremental_pixels, pixels,
+                 sizeof(pixels))); /* no dashboard lamp icons */
   for (unsigned mask = 0; mask < 64; ++mask) {
     s.reading.lights_valid = 63;
     s.reading.lights_on = mask;
@@ -189,6 +199,37 @@ static void verify_source_equivalence(void) {
   puts("Simulated/live operational pixels identical on both pages and all 64 "
        "closure masks");
 }
+static void verify_engine_pixels(void) {
+  uint16_t before[192 * 104];
+  for (unsigned bit = 0; bit < 6; ++bit) {
+    uint8_t mask = bit == 5 ? 16 : bit == 3 ? 1 : bit == 4 ? 2 : 0;
+    const lv_image_dsc_t *frame = NULL;
+    vehicle_3d_pause();
+    for (unsigned i = 0; i < 160; ++i)
+      frame = vehicle_3d_frame(test_clock += 50, false, 0, mask, 63,
+                               (i & 1) ? 63 : 0, 0);
+    assert(frame && frame->data_size == sizeof(before));
+    memcpy(before, frame->data, sizeof(before));
+    frame = vehicle_3d_frame(test_clock += 50, false, 0, mask, 63, 63, 0);
+    assert(
+        !memcmp(before, frame->data, sizeof(before))); /* stationary baseline */
+    frame = vehicle_3d_frame(test_clock += 50, false, 0, mask, 63, 0, 0);
+    uint32_t generation = vehicle_3d_generation();
+    frame = vehicle_3d_frame(test_clock + 1, false, 0, mask, 63, 63, 1u << bit);
+    assert(vehicle_3d_generation() ==
+           generation); /* throttled change retained by caller */
+    frame =
+        vehicle_3d_frame(test_clock += 50, false, 0, mask, 63, 63, 1u << bit);
+    unsigned changed = 0;
+    for (unsigned i = 0; i < 192 * 104; ++i)
+      changed += before[i] != ((const uint16_t *)frame->data)[i];
+    printf("Runtime model lamp bit%u changed %u pixels\n", bit, changed);
+    assert(changed > 0);
+    frame = vehicle_3d_frame(test_clock += 50, false, 0, mask, 63, 0, 63);
+    assert(!memcmp(before, frame->data,
+                   sizeof(before))); /* invalid cannot illuminate */
+  }
+}
 static void verify_vehicle(const char *dir) {
   ui_view_state_t s = {.nav = {UI_ENGINE, 0},
                        .reading = {.available = true,
@@ -197,63 +238,77 @@ static void verify_vehicle(const char *dir) {
                                    .valid_fields = 31,
                                    .gear = 0x10,
                                    .closure_known = 63}};
-  assert(ui_vehicle_asset(true, UI_VEHICLE_BOOT_FRAMES) == NULL);
-  assert(ui_vehicle_asset(false, UI_VEHICLE_CLOSURE_FRAMES) == NULL);
-  assert(!ui_vehicle_asset_valid(NULL));
-  lv_image_dsc_t invalid = *ui_vehicle_asset(true, 0);
-  invalid.header.stride = 1;
-  assert(!ui_vehicle_asset_valid(&invalid));
+  assert(ui_view_vehicle_ready());
   s.boot = true;
-  for (unsigned i = 0; i < UI_VEHICLE_BOOT_FRAMES; i++) {
-    s.boot_frame = i;
+  uint32_t phase_hashes[7] = {0};
+  const float phases[] = {0.0f, 0.12f, 0.3f, 0.5f, 0.7f, 0.9f, 0.97f};
+  for (unsigned i = 0; i < sizeof(phases) / sizeof(phases[0]); ++i) {
+    s.now_ms = (test_clock += 50);
+    s.boot_progress = phases[i];
     equivalent(&s, false);
-    asset_pixels(ui_vehicle_asset(true, i), 64, 34);
-  }
-  const unsigned frames[] = {0, 5, 12, 23, 25, 27};
-  for (unsigned i = 0; i < sizeof(frames) / sizeof(frames[0]); i++) {
-    s.boot_frame = frames[i];
     char name[40];
-    snprintf(name, sizeof(name), "vehicle-boot-%02u", frames[i]);
+    snprintf(name, sizeof(name), "runtime-boot-%02u", i);
     capture(dir, name, &s);
+    uint32_t hash = 2166136261u;
+    for (unsigned px = 0; px < 320 * 172; ++px)
+      hash = (hash ^ pixels[px]) * 16777619u;
+    phase_hashes[i] = hash;
   }
+  assert(phase_hashes[0] != phase_hashes[2] &&
+         phase_hashes[2] != phase_hashes[3] &&
+         phase_hashes[3] !=
+             phase_hashes[4]); /* actual continuous camera viewpoints */
   s.boot = false;
   s.doors = (ui_door_state_t){.known = 63, .active = true, .visible = true};
-  for (unsigned mask = 0; mask < 64; mask++) {
+  for (unsigned mask = 0; mask < 64; ++mask) {
     s.doors.open = mask;
+    s.now_ms = (test_clock += 50);
     equivalent(&s, false);
-    asset_pixels(ui_vehicle_asset(false, mask), 128, 48);
   }
   s.doors.open = 1;
   s.doors.known = 0;
-  capture(dir, "vehicle-unknown", &s);
+  capture(dir, "runtime-unknown", &s);
   s.nav.screen = UI_DETAIL;
   s.nav.item = 0;
   s.doors.visible = false;
   s.password = "abcdefghjkmnpqrs";
-  capture(dir, "vehicle-to-qr", &s);
-  s.password = "";
-  s.nav.screen = UI_ENGINE;
+  uint32_t generation = vehicle_3d_generation();
+  s.now_ms = (test_clock += 100);
+  capture(dir, "runtime-to-qr", &s);
+  assert(vehicle_3d_generation() == generation);
   s.boot = true;
-  s.boot_frame = UI_VEHICLE_BOOT_FRAMES;
-  equivalent(&s, false); /* invalid asset index falls back to instruments */
-  s.boot_frame = 0;
-  s.nav.screen = UI_DETAIL;
-  s.nav.item = 0;
-  s.password = "abcdefghjkmnpqrs";
-  equivalent(&s, false); /* service wins even if adapter supplies boot=true */
-  capture(dir, "vehicle-service-preempts", &s);
-  s.boot = false;
+  s.boot_progress = 0.5f;
   equivalent(&s, false);
-  memcpy(incremental_pixels, pixels, sizeof(pixels));
-  s.boot = true;
-  ui_view_render(&s);
-  lv_refr_now(NULL);
-  assert(memcmp(incremental_pixels, pixels, sizeof(pixels)) == 0);
-  puts(
-      "All 28 boot and 64 closure images match embedded RGB565 pixels exactly");
+  assert(vehicle_3d_generation() == generation); /* service suppresses engine */
+  s.nav.screen = UI_ENGINE;
+  s.password = "";
+  s.maintenance = true;
+  equivalent(&s, false);
+  assert(vehicle_3d_generation() == generation);
+  s.boot = false;
+  s.maintenance = false;
+  s.password = "";
+  s.nav.screen = UI_VEHICLE;
+  s.doors = (ui_door_state_t){.known = 63};
+  capture(dir, "runtime-vehicle-ready", &s);
+  s.maintenance = true;
+  capture(dir, "runtime-vehicle-paused", &s);
+  s.maintenance = false;
+  s.nav.screen = UI_ENGINE;
+  s.doors = (ui_door_state_t){
+      .known = 63, .open = 1, .visible = true, .active = true};
+  capture(dir, "runtime-before-close", &s);
+  s.doors = (ui_door_state_t){.known = 63};
+  s.now_ms = (test_clock += 50);
+  capture(dir, "runtime-closing", &s);
+  s.now_ms = (test_clock += 1050);
+  capture(dir, "runtime-closed-return", &s);
+  puts("Runtime3D boot/64 closure masks/unknown/maintenance-service rendering "
+       "checked");
 }
 int main(int argc, char **argv) {
   assert(argc == 2);
+  setvbuf(stdout, NULL, _IONBF, 0);
   lv_init();
   lv_display_t *d = lv_display_create(320, 172);
   lv_display_set_color_format(d, LV_COLOR_FORMAT_RGB565);
@@ -377,6 +432,32 @@ int main(int argc, char **argv) {
   s.doors.known = 0;
   capture(argv[1], "closure-acknowledged-unknown", &s);
   verify_source_equivalence();
+  s = (ui_view_state_t){
+      .nav = {UI_VEHICLE, 0},
+      .reading = {.status = UI_DATA_LIVE, .lights_valid = 63, .lights_on = 7},
+      .doors = {.known = 63}};
+  capture(argv[1], "runtime-vehicle-closed-lights", &s);
+  memcpy(incremental_pixels, pixels, sizeof(pixels));
+  s.reading.status = UI_DATA_DEMO;
+  ui_view_render(&s);
+  lv_refr_now(NULL);
+  assert(!memcmp(incremental_pixels, pixels, sizeof(pixels)));
+  s.reading.lights_on = 0;
+  capture(argv[1], "runtime-vehicle-closed-off", &s);
+  s.reading.lights_valid = 0;
+  capture(argv[1], "runtime-vehicle-lights-unknown", &s);
+  s.reading.lights_valid = 63;
+  for (unsigned bit = 0; bit < 6; ++bit) {
+    s = (ui_view_state_t){.nav = {UI_VEHICLE, 0},
+                          .reading = {.status = UI_DATA_LIVE,
+                                      .lights_valid = 63,
+                                      .lights_on = 1u << bit},
+                          .doors = {.known = 63}};
+    char name[48];
+    snprintf(name, sizeof(name), "runtime-actual-lamp-%u", bit);
+    capture(argv[1], name, &s);
+  }
+  verify_engine_pixels();
   verify_vehicle(argv[1]);
   verify_incremental();
   lv_mem_monitor_t m;
