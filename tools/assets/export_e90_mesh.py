@@ -106,9 +106,37 @@ def rgb565(rgb):
     return (r >> 3) << 11 | (g >> 2) << 5 | (b >> 3)
 
 
+# Replace texture-averaged source badges with recognizable, bounded geometry.
+# At the native panel scale these emphasize the roundel, not unreadable letters.
+roundels = []
+roundel_metadata = []
+for name, group, radius in [('Circle', 6, .080), ('Circle.001', 5, .075)]:
+    badge = bpy.data.objects[name]
+    cap = max(badge.data.polygons, key=lambda polygon: polygon.area)
+    normal = (badge.matrix_world.to_3x3().inverted().transposed() @ cap.normal).normalized()
+    center = badge.matrix_world @ cap.center + normal * .004
+    u = Vector((1, 0, 0))
+    u = (u - normal * u.dot(normal)).normalized()
+    v = normal.cross(u).normalized()
+    def point(r, angle):
+        return center + r * (u * math.cos(angle) + v * math.sin(angle))
+    for i in range(16):
+        a, b = 2 * math.pi * i / 16, 2 * math.pi * (i + 1) / 16
+        for outer, inner, color in [(1, .89, 0xc618), (.89, .61, 0x0841)]:
+            p0, p1 = point(radius * outer, a), point(radius * outer, b)
+            p2, p3 = point(radius * inner, b), point(radius * inner, a)
+            roundels.extend([([p0, p1, p2], color, group), ([p0, p2, p3], color, group)])
+        # White upper-right/lower-left; blue upper-left/lower-right.
+        color = 0xffff if (i // 4) % 2 == 0 else 0x045f
+        roundels.append(([center.copy(), point(radius * .61, a), point(radius * .61, b)], color, group))
+    roundel_metadata.append({'source_object': name, 'group': group,
+                             'center': list(center), 'normal': list(normal),
+                             'radius': radius, 'triangles': 80})
+
+
 entries = []
 for original in list(bpy.data.objects):
-    if original.type != 'MESH':
+    if original.type != 'MESH' or original.name in ('Circle', 'Circle.001'):
         continue
     obj = bpy.data.objects.new('export_' + original.name, original.data.copy())
     bpy.context.collection.objects.link(obj)
@@ -164,11 +192,14 @@ lo, hi = 0.0, 1.0
 for _ in range(14):
     mid = (lo + hi) / 2
     triangles, _ = extract(mid)
-    if len(triangles) > MAX_TRIANGLES:
+    if len(triangles) + len(roundels) > MAX_TRIANGLES:
         hi = mid
     else:
         lo = mid
 triangles, counts = extract(lo, True)
+triangles.extend(roundels)
+counts['Roundel hood'] = 80
+counts['Roundel trunk'] = 80
 assert 1000 <= len(triangles) <= MAX_TRIANGLES
 assert set(range(17)).issubset({group for _, _, group in triangles})
 # Quantization is deliberately fine enough to avoid moving visible panel edges.
@@ -203,10 +234,11 @@ manifest = {
     'wheel_group_order': '9 FL, 10 FR, 11 RL, 12 RR',
     'lamp_groups': {'13': 'lampudepan front left (+X)', '14': 'lampudepan front right (-X)', '15': 'Plane.004 rear left (+X)', '16': 'Plane.004 rear right (-X)'},
     'wheel_pivots_xyz': wheel_pivots,
-    'simplification': 'Per-object Blender collapse decimation, weighted lower for wheels/illustrative lamps, higher for windows; binary-searched total budget; no object or closure group omitted.',
+    'roundels': roundel_metadata,
+    'simplification': 'Per-object Blender collapse decimation, weighted lower for wheels/illustrative lamps, higher for windows; binary-searched total budget; source badge meshes replaced by 160 explicitly reserved roundel triangles; all other objects and closure groups retained.',
     'color': 'RGB565 base material, or three interior UV texture samples per triangle; runtime flat lighting is separate.',
     'rest_reset': 'Vehicle motion root translation/rotation/scale; six closure pivot rotations; wheel pivot rotations; scene animation cleared in memory.',
-    'limitations': 'Simplified community model; not measured BMW geometry. Fine texture detail approximated by flat per-face colors. No device performance claim.',
+    'limitations': 'Simplified community model; not measured BMW geometry. Fine texture detail approximated by flat per-face colors. Hood/trunk roundels are exaggerated geometric derivatives (chrome outline, black ring, blue/white center), not readable lettering. No device performance claim.',
     'export_command': 'blender --background --factory-startup --disable-autoexec assets/ui/e90/prepared.blend --python tools/assets/export_e90_mesh.py'
 }
 assert hashlib.sha256(SOURCE.read_bytes()).hexdigest() == source_hash

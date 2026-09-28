@@ -22,3 +22,9 @@ COM6 capture SHA-256: `bdb5c45fed6acf481bb8ba74f26d8cc91bb8528a95010518caaaee1be
 Period averages mix boot, transitions and settled scenes; they are not display FPS.
 
 COM7 capture SHA-256: `d7a951084b4c168d33b38a7ef89865b7f19561e978bed140e3375f262467184d`. Fault signatures: 0.
+
+## Hood/trunk emblem follow-up
+
+Image SHA-256 `5241e588456d2adc8a9b81d29e6abb623f6a94aa72e0e66a04286679531e2892`, unchanged 1,929,280-byte image size and 2,498 triangles. Added explicit blue/white roundels to hood/trunk groups, preserving their opening transforms. Actual LVGL/TGX host suite passes 1,459 comparisons; front, rear and open-trunk captures visually inspected. Build/audit and application-only write verification passed. A 25-second USB run passed the boot self-test with no panic/assert/watchdog signatures.
+
+Wheel private capture SHA-256: `4e05f0bdb21780a97f2fb8849a4c3119c4e97173c57283e932af2003b541c8c8`.
