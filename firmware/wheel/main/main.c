@@ -26,11 +26,28 @@ static void source(void *a) {
     demo_edit(rpm, NULL);
     vTaskDelay(pdMS_TO_TICKS(20));
   }
-  demo_state_t s;
-  demo_get(&s);
-  update_boot_validate(s.flushes > 0 && demo_ms() - s.input_heartbeat < 100 &&
-                       demo_ms() - s.ui_heartbeat < 100 &&
-                       heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) > 20000);
+  // A 3D frame can straddle the single 10-second sampling instant.
+  // Require two fresh UI heartbeats within a bounded window instead.
+  uint64_t deadline = demo_ms() + 2000, first_ui = 0;
+  bool healthy = false, observed = false;
+  do {
+    demo_state_t s;
+    demo_get(&s);
+    uint64_t now = demo_ms();
+    bool fresh = s.flushes > 0 && now - s.input_heartbeat < 100 &&
+        now - s.ui_heartbeat < 100 &&
+        heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) > 20000;
+    if (fresh) {
+      if (observed && s.ui_heartbeat != first_ui) {
+        healthy = true;
+        break;
+      }
+      if (!observed) { first_ui = s.ui_heartbeat; observed = true; }
+    }
+    demo_edit(rpm, NULL);
+    vTaskDelay(pdMS_TO_TICKS(20));
+  } while (demo_ms() < deadline);
+  update_boot_validate(healthy);
   for (;;) {
     demo_edit(rpm, NULL);
     vTaskDelay(pdMS_TO_TICKS(20));

@@ -1,9 +1,14 @@
 #include "rpm_led.h"
 #include <string.h>
-static unsigned count(uint32_t rpm) {
-  if (!rpm)
-    return 1; /* A valid stopped engine has an amber status pixel. */
-  return (rpm * RPM_LED_COUNT + RPM_LED_FULL_SCALE - 1u) / RPM_LED_FULL_SCALE;
+static void blend_max(rpm_led_color_t *out, rpm_led_color_t c, float coverage) {
+  if (coverage <= 0) return;
+  if (coverage > 1) coverage = 1;
+  uint8_t r = (uint8_t)(c.r * coverage + .5f);
+  uint8_t g = (uint8_t)(c.g * coverage + .5f);
+  uint8_t b = (uint8_t)(c.b * coverage + .5f);
+  if (r > out->r) out->r = r;
+  if (g > out->g) out->g = g;
+  if (b > out->b) out->b = b;
 }
 static rpm_led_color_t color(unsigned p, bool idle) {
   if (idle ||
@@ -51,11 +56,20 @@ void rpm_led_frame(rpm_led_state_t *s, uint32_t rpm, bool valid, uint32_t now,
     s->shift = true;
   else if (rpm < 6350u)
     s->shift = false;
-  unsigned filled = count(rpm);
+  float filled = (float)rpm * RPM_LED_COUNT / RPM_LED_FULL_SCALE;
+  /* Preserve the amber stopped/low-idle status pixel. */
+  if (filled < 1.f) filled = 1.f;
   if (!s->shift || ((now / 125u) & 1u))
-    for (unsigned p = 0; p < filled; ++p)
-      pixels[p] = color(p, rpm <= RPM_LED_IDLE_LIMIT);
-  unsigned peak = count((uint32_t)s->peak_rpm) - 1u;
-  if (peak >= filled)
-    pixels[peak] = color(peak, false);
+    for (unsigned p = 0; p < RPM_LED_COUNT; ++p)
+      blend_max(&pixels[p], color(p, rpm <= RPM_LED_IDLE_LIMIT), filled - p);
+  if (s->peak_rpm > rpm + 1.f) {
+    float position = s->peak_rpm * RPM_LED_COUNT / RPM_LED_FULL_SCALE - 1.f;
+    if (position < 0) position = 0;
+    unsigned lower = (unsigned)position;
+    float part = position - lower;
+    if (lower < RPM_LED_COUNT)
+      blend_max(&pixels[lower], color(lower, false), 1.f - part);
+    if (lower + 1 < RPM_LED_COUNT)
+      blend_max(&pixels[lower + 1], color(lower + 1, false), part);
+  }
 }

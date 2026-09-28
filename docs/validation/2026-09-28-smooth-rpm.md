@@ -1,0 +1,17 @@
+# Continuous telemetry and fractional RPM LEDs — 2026-09-28
+
+The gateway simulator updates RPM through the whole cycle, including stationary/P door demonstrations. Speed remains zero during those closure scenarios, with gear P; temperatures and lamp telemetry continue independently. The wheel retains its operational UI and consumes the same normalized snapshots as a future CAN source. Existing automatic door overlay on Drive/Sport preserves the underlying page and returns after known closure; service/maintenance suppression remains. No application or OTA recovery protocol change.
+
+LED output stays independent of the displayed page. Each of 23 RPM pixels gets clamped fractional coverage of the RPM scale, rounded to its available RGB channel level. This fades the boundary pixel in both directions. Low-RPM/stopped amber status, existing color ramp, shift hysteresis/blink and button pixels remain. The accelerating falling peak blends across adjacent pixels and combines with the bar using channel maxima, keeping brightness bounded. No software blink or temporal dithering added; 20 ms IO cadence unchanged. Invalid/stale/maintenance input clears and resets the effect.
+
+Tests first demonstrated missing partial brightness and fixed RPM during doors; both then passed after implementation. Production-C host tests cover boundary monotonicity, clamping, color/shift behavior, peak timing/cadence/wrap/reset, continuous valid demo telemetry through all closure states, and UI automatic door activation/acknowledgment/return and maintenance suppression. Low channel values impose finite brightness steps; physical smoothness requires user observation.
+
+The first joint bench run confirmed secure changing RPM (e.g. 6059 then 4861) while automatic closure overlay was visible. It also exposed the existing single-instant boot health check: the 3D UI loop can exceed the 100 ms snapshot freshness bound. The wheel now observes up to two seconds and requires two distinct fresh UI heartbeat values, with unchanged <100 ms input/UI age and >20 KB internal memory conditions. No task priority, freshness threshold or OTA protocol changed; stalled UI cannot pass by repeating one heartbeat. Telemetry continues during the bounded health observation.
+
+Final joint 35-second USB bench run completed after midnight on 2026-09-29. Both boot self-tests passed. Wheel logs show secure changing RPM 6005, 5024 and 1975 with open masks 04, 10 and 19 and visible closure overlay; known closure returned visible=0 at 22.37 seconds. Speed/gear/temperatures continued and driving phase resumed after closure. No panic/assert/watchdog or wheel LED TX failure found in capture. Visual LED smoothness remains subject to user confirmation; logs do not measure emitted brightness.
+
+Render average 67,619 us / max 81,526 us; internal heap minimum 76,100 bytes, largest internal block 31,744 bytes, UI stack low-water 1,052 bytes. No graphics performance improvement claimed. Both application-only USB writes verified hashes, wheel ota_1 0x620000 and gateway ota_0 0x20000; NVS/partition tables/original backup preserved. CAN remains disabled; no vehicle-control transmission.
+
+Final wheel app: 1,954,944 bytes, SHA-256 `7979fc39089d876a5a7dbc2b6ff756167bba5bfda4a7aff2f5edd7a912dda10d`.
+Gateway app: 1,267,792 bytes, SHA-256 `b082b605ed0405ad04749302d39b6c91282ef67a8d31b325c3c158fcaad9da48`.
+ESP-IDF 6.1 builds and system audit passed. Exact-build network OTA requalification remains pending.

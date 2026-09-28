@@ -77,6 +77,9 @@ void cockpit_demo(uint32_t now, cockpit_sample_t *s) {
                           .gear = 0x10,
                           .coolant_c = 95 + (int16_t)((now / 5000) % 3),
                           .oil_c = 105 + (int16_t)((now / 7000) % 4)};
+  s->rpm = t < 12000   ? 800 + t * 6200 / 12000
+           : t < 14000 ? 7000
+                       : 7000 - (t - 14000) * 6200 / 4000;
   if (phase < 6000)
     return;
   if (phase < 18000) {
@@ -94,7 +97,4 @@ void cockpit_demo(uint32_t now, cockpit_sample_t *s) {
   s->speed_dkph =
       drive < 18000 ? drive * 1300 / 18000 : (36000 - drive) * 1300 / 18000;
   s->gear = 0x40 | (1 + s->speed_dkph / 240);
-  s->rpm = t < 12000   ? 800 + t * 6200 / 12000
-           : t < 14000 ? 7000
-                       : 7000 - (t - 14000) * 6200 / 4000;
 }

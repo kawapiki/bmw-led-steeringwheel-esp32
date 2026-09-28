@@ -9,6 +9,11 @@ src.write_text(r'''
 #include <math.h>
 static unsigned lit(rpm_led_color_t *p) { unsigned n=0; for(unsigned i=0;i<23;i++) n+=!!(p[i].r||p[i].g||p[i].b); return n; }
 int main(void) {
+ /* At a boundary the next LED fades in instead of snapping to full. */
+ rpm_led_color_t q[23]; rpm_led_state_t z={0};
+ rpm_led_frame(&z,2900,true,125,q); unsigned low=q[10].g;
+ z=(rpm_led_state_t){0}; rpm_led_frame(&z,3050,true,125,q);
+ assert(low>0 && q[10].g>low);
  rpm_led_state_t s={0}; rpm_led_color_t p[23];
  rpm_led_frame(&s,0,true,0,p); assert(lit(p)==1 && p[0].r>0 && p[0].g>0);
  rpm_led_frame(&s,1200,true,20,p); assert(lit(p)==5); for(int i=0;i<5;i++) assert(p[i].r>p[i].g);
@@ -17,7 +22,7 @@ int main(void) {
  rpm_led_frame(&s,6500,true,125,p); assert(lit(p)==23);
  for(int i=20;i<23;i++) { assert(p[i].r>p[i-1].r); assert(p[i].g<p[i-1].g); }
  rpm_led_frame(&s,6500,true,250,p); assert(lit(p)==0);
- rpm_led_frame(&s,3000,true,270,p); assert(lit(p)==12 && p[22].r>0);
+ rpm_led_frame(&s,3000,true,270,p); assert(lit(p)>=12 && p[22].r>0);
  float a=s.peak_rpm;
  rpm_led_frame(&s,3000,true,370,p); float b=s.peak_rpm;
  rpm_led_frame(&s,3000,true,470,p); float c=s.peak_rpm;
@@ -26,6 +31,12 @@ int main(void) {
  rpm_led_frame(&s,6000,true,1520,p); assert(s.peak_rpm==6000 && s.fall_velocity==0);
  rpm_led_frame(&s,0,false,1540,p); assert(lit(p)==0 && !s.initialized);
  rpm_led_frame(&s,800,true,1560,p); assert(lit(p)==3 && s.peak_rpm==800);
+ /* Both sides of a boundary converge to the same brightness, rising/falling. */
+ for(unsigned r=2800;r<3100;r+=5) {
+   rpm_led_state_t fresh={0}; rpm_led_frame(&fresh,r,true,125,p);
+   fresh=(rpm_led_state_t){0}; rpm_led_frame(&fresh,r+5,true,125,q);
+   assert(q[10].g>=p[10].g && q[10].g-p[10].g<=1);
+ }
  /* Equal elapsed time at different cadences gives equal peak positions. */
  rpm_led_state_t x={0},y={0};
  rpm_led_frame(&x,6000,true,0,p); rpm_led_frame(&y,6000,true,0,p);
@@ -38,7 +49,7 @@ int main(void) {
  for(unsigned r=0;r<=10000;r++) {
    s=(rpm_led_state_t){0}; rpm_led_frame(&s,r,true,125,p);
    unsigned v=r>6500?6500:r, expected=v?(v*23+6499)/6500:1;
-   assert(lit(p)==expected);
+   assert(lit(p)<=expected && lit(p)+1>=expected);
  }
 }
 ''',encoding='utf-8')

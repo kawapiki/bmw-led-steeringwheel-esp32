@@ -34,6 +34,8 @@ int main(void){
   assert(cockpit_accept(&t,200+selector*10+gear,p,22,1400,1410,&o)==allowed);
  }
  cockpit_encode(p,3,300,&s);p[3]|=0x80;assert(!cockpit_accept(&t,500,p,22,1500,1510,&o));
+ cockpit_sample_t a,b;cockpit_demo(7000,&a);cockpit_demo(7100,&b);
+ assert(a.closure_open && b.closure_open && a.rpm!=b.rpm);
  uint8_t seen=0;for(uint32_t ms=0;ms<60000;ms+=100){cockpit_demo(ms,&s);assert(s.valid==0x7ff&&s.source==1);if(ms<6000)assert(!s.closure_open&&!s.speed_dkph);if(ms>=18000&&ms<21000)assert(s.closure_open==0x19);if(ms>=21000&&ms<24000)assert(!s.closure_open);if(s.closure_open){assert(!s.speed_dkph&&s.gear==0x10);seen|=s.closure_open;}cockpit_encode(p,ms+1,ms,&s);assert(cockpit_accept(&t,5,p,22,ms+1,ms+2,&o));}assert(seen==0x3f);
  return 0;
 }
