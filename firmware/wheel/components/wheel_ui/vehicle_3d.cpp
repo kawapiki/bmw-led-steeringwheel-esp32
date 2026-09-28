@@ -228,6 +228,28 @@ extern "C" const lv_image_dsc_t *vehicle_3d_frame(uint64_t now, bool boot,
     for (int side = -1; side <= 1; side += 2)
       ground_light(side * .6f, 2.55f, .55f, .65f, 0xf800, 1, root_sn, root_cs,
                    root_x, root_y);
+  // Body-mounted fender repeaters: independent of door hinge transforms.
+  // Slightly enlarged for the native 320x172 display; no local blink timer.
+  for (int side = -1; side <= 1; side += 2) {
+    bool lit = (active_lamps & (side > 0 ? 8 : 16)) != 0;
+    uint16_t lens = lit ? 0xfd20 : dim_color(0x4208, reveal);
+    unlit(lens);
+    tgx::fVec3 p[4];
+    const float yy[4] = {-.99f, -.80f, -.80f, -.99f};
+    const float zz[4] = {.68f, .68f, .735f, .735f};
+    for (unsigned k = 0; k < 4; ++k)
+      p[k] = world_point(tgx::fVec3(side * 1.006f, yy[k], zz[k]), root_sn,
+                         root_cs, root_x, root_y);
+    renderer.drawTriangle(p[0], p[1], p[2]);
+    renderer.drawTriangle(p[0], p[2], p[3]);
+    if (lit) {
+      unlit(dim_color(lens, .16f));
+      for (auto &point : p)
+        point.z = -.336f - point.z;
+      renderer.drawTriangle(p[0], p[1], p[2]);
+      renderer.drawTriangle(p[0], p[2], p[3]);
+    }
+  }
   float sn[7] = {}, cs[7] = {1, 1, 1, 1, 1, 1, 1};
   for (unsigned i = 1; i <= 6; i++) {
     float a = angles[i] * rad(i <= 4 ? ((i == 1 || i == 3) ? -52 : 52)
@@ -320,6 +342,17 @@ extern "C" const lv_image_dsc_t *vehicle_3d_frame(uint64_t now, bool boot,
                          (unsigned)(63 * value) << 5 |
                          (unsigned)(31 * fminf(1.f, value * 1.04f)));
     }
+    if (!boot && t.material == 1 && g >= 1 && g <= 4 &&
+        (known & open & (1u << (g - 1)))) {
+      // Subtle red paint tint, preserving the metallic highlights. Unknown
+      // or merely animating-to-closed doors must not claim an active opening.
+      unsigned r = (color >> 11) & 31, green = (color >> 5) & 63,
+               b = color & 31;
+      r += (31 - r) / 5;
+      green = green * 4 / 5;
+      b = b * 4 / 5;
+      color = (uint16_t)((r << 11) | (green << 5) | b);
+    }
     if (!emissive)
       color = dim_color(color, reveal);
     if (emissive) {
@@ -344,8 +377,7 @@ extern "C" const lv_image_dsc_t *vehicle_3d_frame(uint64_t now, bool boot,
         renderer.setMaterial(
             tgx::RGBf(tgx::RGB565(color)),
             (emissive || t.material == 1) ? 1.f : (t.material ? .45f : .65f),
-            emissive ? 0.f : (t.material ? .45f : .75f),
-            0.f, 0);
+            emissive ? 0.f : (t.material ? .45f : .75f), 0.f, 0);
       } else
         renderer.setMaterialColor(tgx::RGBf(tgx::RGB565(color)));
       material_key = key;
