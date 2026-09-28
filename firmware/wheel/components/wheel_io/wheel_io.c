@@ -4,6 +4,7 @@
 #include "driver/rmt_tx.h"
 #include "freertos/task.h"
 #include "wheel_led.h"
+#include "rpm_led.h"
 #include "esp_log.h"
 #include "wheel_board.h"
 #include "wheel_core.h"
@@ -90,7 +91,8 @@ static void clear_test(demo_state_t *s, void *a) {
 }
 static void effects(void *a) {
   (void)a;
-  bool shift = false;
+  rpm_led_state_t rpm_effect = {0};
+  rpm_led_color_t pixels[RPM_LED_COUNT];
   TickType_t last = xTaskGetTickCount();
   for (;;) {
     demo_state_t s;
@@ -99,18 +101,21 @@ static void effects(void *a) {
       vTaskDelay(pdMS_TO_TICKS(20));
       continue;
     }
-    if (s.rpm >= 6500)
-      shift = true;
-    else if (s.rpm < 6350)
-      shift = false;
-    uint32_t mask = rpm_mask(s.rpm);
-    bool lit = !shift || ((demo_ms() / 125) % 2);
+    uint64_t now = demo_ms();
+    bool rpm_valid = !s.writing && !s.maintenance && !s.led_mode &&
+        s.telemetry_source != DEMO_SOURCE_NONE &&
+        (s.telemetry_valid & COCKPIT_VALID_RPM) &&
+        telemetry_is_fresh(s.link_secure, s.app_compatible,
+                           s.telemetry_received, now);
+    rpm_led_frame(&rpm_effect, s.ble_rpm, rpm_valid, (uint32_t)now, pixels);
     bool frame_ok = true;
     for (int chain = 0; chain < 2; chain++) {
       for (int p = 0; p < 23; p++) {
-        bool on = !s.writing && !s.maintenance && lit && (mask & (1u << p));
-        uint8_t r = p < 15 ? 0 : 25, g = p < 20 ? 25 : 0;
+        bool on = true;
+        uint8_t r = pixels[p].r, g = pixels[p].g;
         if (s.led_mode) {
+          r = p < 15 ? 0 : 25;
+          g = p < 20 ? 25 : 0;
           on = !s.writing && !s.maintenance &&
                (s.led_mode == 1   ? chain == 0
                 : s.led_mode == 2 ? chain == 1

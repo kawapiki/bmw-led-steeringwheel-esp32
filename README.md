@@ -1,16 +1,23 @@
 # E90 LED/TFT steering wheel
 
-Hardware reference and original firmware backup for a Chinese aftermarket BMW E90 steering-wheel display board. Custom firmware development has started; the first build foundation is documented in [firmware/wheel](firmware/wheel/README.md). The complete demo and hardware validation are still pending.
+Hardware reference and original firmware backup for a Chinese aftermarket BMW E90 steering-wheel display board. Custom firmware now runs a gateway-fed cockpit, dynamic E90 3D opening/light views, and fractional-brightness RPM LEDs. USB bench validation is recorded; vehicle CAN compatibility and control remain unqualified.
+
+## Current firmware screenshots
+
+![Gateway-fed cockpit](docs/design/e90-closure-camera/runtime-renders/current-drive-108-D5.png)
+![Dynamic E90 door view](docs/design/e90-closure-camera/runtime-renders/current-closure-FL.png)
+
+Host captures of the actual LVGL/TGX renderer, not device photographs. See the [illustrated feature guide and current limitations](docs/design/e90-closure-camera/README.md) and [latest joint bench report](docs/validation/2026-09-28-smooth-rpm.md).
 
 ## Development planning
 
 - [First wheel demo: animations, peripherals and Wi-Fi OTA](docs/architecture/wheel-demo-v0.1.md) (Hungarian)
 - [System architecture and responsiveness targets](docs/architecture/system-design.md) (Hungarian)
 - [Shared component and communication contracts](docs/architecture/contracts.md)
-- [Nine specialized development agent roles](agents/README.md)
+- [Specialized development agent roles](agents/README.md)
 - [Repository-wide agent instructions](AGENTS.md)
 
-These documents define the proposed two-device design and parallel development responsibilities. They do not claim implemented firmware, measured performance, or confirmed vehicle-bus compatibility.
+These documents include original design proposals and role boundaries. Use the current feature guide and dated validation reports for implemented behavior and measurements; vehicle-bus compatibility remains unresolved.
 
 ## Hardware identification photos
 
@@ -54,14 +61,14 @@ Close-up of the USB-C port, two white connectors, and nearby power components. C
 | Item | Specification |
 |---|---|
 | PCB marking | CVS8161-332-V01-T16 |
-| Additional markings | MARTIN · 2026.4.20 |
+| Additional markings | MARTIN Â· 2026.4.20 |
 | MCU | ESP32-S3, QFN56, silicon revision v0.2 |
 | PSRAM | 8 MB embedded |
 | Flash | Winbond, JEDEC EF4019, 32 MiB, 3.3 V |
 | Crystal | 40 MHz |
-| Display | ST7789/ST7789VW driver, 320 × 172 |
-| LEDs | Two WS2812 chains, 24 addressed LEDs per chain; the first LED (index 0) of each chain lights a button (owner-corrected during bench testing); indices 1–23 are RPM LEDs |
-| Motion-sensor interface | BNO055, I²C address 0x28, 400 kHz |
+| Display | ST7789/ST7789VW driver, 320 Ã— 172 |
+| LEDs | Two WS2812 chains, 24 addressed LEDs per chain; the first LED (index 0) of each chain lights a button (owner-corrected during bench testing); indices 1â€“23 are RPM LEDs |
+| Motion-sensor interface | BNO055, IÂ²C address 0x28, 400 kHz |
 | USB | Native USB Serial/JTAG |
 | Secure Boot / flash encryption | Both disabled at backup time |
 
@@ -82,13 +89,13 @@ Assignments below are confirmed in the original firmware. PCB continuity and con
 | Button K1 | Input | 12 | 17 | Active low, internal pull-up |
 | Button K2 | Input | 11 | 16 | Active low, internal pull-up |
 | Vibration driver | Control | 21 | 27 | High = on |
-| BNO055 interface | SDA | 39 | 44 | I²C data |
-| BNO055 interface | SCL | 40 | 45 | I²C clock |
+| BNO055 interface | SDA | 39 | 44 | IÂ²C data |
+| BNO055 interface | SCL | 40 | 45 | IÂ²C clock |
 | BNO055 power control | Enable/control | 10 | 15 | High = enabled |
 
 Display configuration: SPI2, mode 0, no MISO, 10 MHz initialization followed by 40 MHz operation. LED wire order: GRB. GPIO10 and GPIO21 are logic-control signals, not identified power terminals.
 
-Standard ESP32-S3 native USB assignments are GPIO19 / QFN25 for D− and GPIO20 / QFN26 for D+. Physical USB routing has not been traced. Physical chip-pin numbering follows the [ESP32-S3 datasheet](https://www.espressif.com/sites/default/files/documentation/esp32-s3_datasheet_en.pdf).
+Standard ESP32-S3 native USB assignments are GPIO19 / QFN25 for Dâˆ’ and GPIO20 / QFN26 for D+. Physical USB routing has not been traced. Physical chip-pin numbering follows the [ESP32-S3 datasheet](https://www.espressif.com/sites/default/files/documentation/esp32-s3_datasheet_en.pdf).
 
 ## Original firmware backup
 
@@ -99,7 +106,7 @@ Standard ESP32-S3 native USB assignments are GPIO19 / QFN25 for D− and GPIO20 
 | Backup date | 2026-09-27 |
 | Image type | Complete raw flash image |
 | Size | 33,554,432 bytes (32 MiB) |
-| Flash range | 0x00000000–0x01FFFFFF |
+| Flash range | 0x00000000â€“0x01FFFFFF |
 | Integrity | Verified against the device's complete flash digest |
 | Restore testing | Not performed |
 

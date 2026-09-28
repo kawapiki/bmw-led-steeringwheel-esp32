@@ -1,0 +1,185 @@
+{
+  "contract": "runtime3D1",
+  "source": "assets/ui/e90/prepared.blend",
+  "source_sha256": "5200927f6365d5985dba0a41edd21e9541aed72643db04ff4f4e3723339bee0d",
+  "source_modified": false,
+  "attribution": "BMW 320i E90 Low Polly by rifdanzz / Rifdan Adidan",
+  "source_url": "https://sketchfab.com/3d-models/bmw-320i-e90-low-polly-28f0bc2f0083417a8e521150529034d6",
+  "license": "CC BY 4.0",
+  "license_url": "https://creativecommons.org/licenses/by/4.0/",
+  "triangles": 3100,
+  "triangle_budget": 3100,
+  "header_bytes": 349971,
+  "expected_struct_bytes": 40,
+  "expected_array_bytes": 124000,
+  "header_sha256": "e9644b854184be0afcf7f337396e7b5d997046bdaf34851b4f70a34b75530c75",
+  "coordinate_convention": "world/rest coordinates; front -Y; up +Z; left +X",
+  "bounds_xyz": [
+    [
+      -1.0062623023986816,
+      1.0049349069595337
+    ],
+    [
+      -2.132350206375122,
+      2.374680519104004
+    ],
+    [
+      -0.14937449991703033,
+      1.2763957977294922
+    ]
+  ],
+  "groups": {
+    "0": 1253,
+    "1": 140,
+    "2": 140,
+    "3": 76,
+    "4": 77,
+    "5": 123,
+    "6": 131,
+    "7": 76,
+    "8": 16,
+    "9": 262,
+    "10": 262,
+    "11": 262,
+    "12": 261,
+    "13": 7,
+    "14": 5,
+    "15": 4,
+    "16": 5
+  },
+  "objects": {
+    "Circle.002": 262,
+    "Circle.003": 262,
+    "Circle.004": 262,
+    "Circle.005": 261,
+    "Circle.006": 17,
+    "Circle.007": 17,
+    "Cube": 8,
+    "Cube.001": 14,
+    "Cube.002": 14,
+    "Cube.003": 18,
+    "Cube.004_L": 71,
+    "Cube.004_R": 71,
+    "Interior blackout tub": 4,
+    "Kapdepan": 51,
+    "lampudepan": 12,
+    "Plane.001": 241,
+    "Plane.002": 198,
+    "Plane.003": 24,
+    "Plane.004": 9,
+    "Plane.005": 47,
+    "Plane.006": 54,
+    "Plane.007": 78,
+    "Plane.008": 43,
+    "Plane.009_L": 58,
+    "Plane.009_R": 58,
+    "Plane.010_L": 70,
+    "Plane.010_R": 71,
+    "Plane.011": 88,
+    "Plane.012": 65,
+    "Plane.013": 34,
+    "Plane.014": 19,
+    "Plane.015_L": 11,
+    "Plane.015_R": 11,
+    "Plane.016": 9,
+    "Plane.017_L": 6,
+    "Plane.017_R": 6,
+    "Plane.018": 236,
+    "Plane.019": 52,
+    "Plane.020": 4,
+    "Plane.021": 6,
+    "Plane.022": 6,
+    "Sphere": 8,
+    "Sphere.001": 8,
+    "Torus": 20,
+    "Torus.001": 20,
+    "Torus.002": 20,
+    "Torus.003": 16,
+    "Roundel hood": 80,
+    "Roundel trunk": 80
+  },
+  "collapse_scale": 0.27545166015625,
+  "wheel_group_order": "9 FL, 10 FR, 11 RL, 12 RR",
+  "lamp_groups": {
+    "13": "lampudepan front left (+X)",
+    "14": "lampudepan front right (-X)",
+    "15": "Plane.004 rear left (+X)",
+    "16": "Plane.004 rear right (-X)"
+  },
+  "wheel_pivots_xyz": [
+    [
+      0.7647339105606079,
+      -1.3923864364624023,
+      0.17090654373168945
+    ],
+    [
+      -0.7822359204292297,
+      -1.3923864364624023,
+      0.17090654373168945
+    ],
+    [
+      0.7647339105606079,
+      1.3869565725326538,
+      0.17090654373168945
+    ],
+    [
+      -0.7822359204292297,
+      1.3869565725326538,
+      0.17090654373168945
+    ]
+  ],
+  "roundels": [
+    {
+      "source_object": "Circle",
+      "group": 6,
+      "center": [
+        -5.177062778471964e-09,
+        -1.9140872955322266,
+        0.6423919796943665
+      ],
+      "normal": [
+        6.141621611277515e-08,
+        -0.35343509912490845,
+        0.9354590773582458
+      ],
+      "radius": 0.08,
+      "triangles": 80
+    },
+    {
+      "source_object": "Circle.001",
+      "group": 5,
+      "center": [
+        -1.9414971852427243e-09,
+        2.3047866821289062,
+        0.7901583313941956
+      ],
+      "normal": [
+        -6.921171689100447e-07,
+        0.9958236813545227,
+        -0.09129741787910461
+      ],
+      "radius": 0.075,
+      "triangles": 80
+    }
+  ],
+  "materials": {
+    "0": "other",
+    "1": "black body paint",
+    "2": "dark tinted glass"
+  },
+  "material_counts": {
+    "0": 1876,
+    "1": 1130,
+    "2": 94
+  },
+  "paint_base_srgb": [
+    0.14,
+    0.15,
+    0.16
+  ],
+  "simplification": "Per-object Blender collapse decimation, weighted moderately for wheels and lower for illustrative lamps, higher for windows; binary-searched total budget; source badge meshes replaced by 160 explicitly reserved roundel triangles; all other objects and closure groups retained.",
+  "color": "RGB565 base material/UV samples; body paint near-black sRGB (.14,.15,.16). Explicit per-face material ID allows runtime metallic/clearcoat lighting; material does not change geometry.",
+  "rest_reset": "Vehicle motion root translation/rotation/scale; six closure pivot rotations; wheel pivot rotations; scene animation cleared in memory.",
+  "limitations": "Simplified community model; not measured BMW geometry. Fine texture detail approximated by flat per-face colors. Hood/trunk roundels are exaggerated geometric derivatives (chrome outline, black ring, blue/white center), not readable lettering. No device performance claim.",
+  "export_command": "blender --background --factory-startup --disable-autoexec assets/ui/e90/prepared.blend --python tools/assets/export_e90_mesh.py"
+}

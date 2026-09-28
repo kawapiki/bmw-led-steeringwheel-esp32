@@ -45,3 +45,11 @@ Source re-review of8c5fcde resolved all eight Important findings. User authorize
 ## 2026-09-28: first successful paired GitHub OTA
 
 Both physical devices installed signed system-r4 through gateway-first OTA, confirmed valid boot in their alternate slots and restored authenticated BLE. Wheel download/verification completed in49.3s. The owner confirmed menu/buttons and absence of unexpected LED flashes after the complete-frame DMA change. Earlier wheel network failures retained the running image, and retry reused the already-valid gateway without reinstalling it. Full evidence, resource limits and failed attempts are in the [paired OTA bench report](2026-09-28-paired-ota-bench.md). Deliberate failed-boot rollback, application-major mismatch recovery, endurance and vehicle qualification remain pending; successful paired OTA does not establish those tests.
+
+## 2026-09-28: Ribbon instruments and gateway-driven display
+
+Engine and Shift instruments now display the authenticated gateway's synthetic RPM; disconnected/stale data clears instead of continuing local simulation. Four-role design/implementation/review completed. Both IDF6.1 images were built, hash-verified and USB-tested. Owner confirmed both instruments and navigation; controlled gateway outage recovered automatically; Wi-Fi release discovery completed with minimum9,220bytes free heap. Details and limits: [gateway/UI bench report](2026-09-28-gateway-ui-bench.md). These are development images with preserved release4 OTA metadata, not a new published system release.
+
+## 2026-09-28: information cockpit and automatic closure graphics
+
+Drive and Sport now show gateway-supplied demo speed, RPM, selector/gear, coolant and oil temperatures. An automatic original vehicle graphic identifies individual doors, trunk and hood, with independent validity and last-known/unknown handling. The optional cockpit characteristic preserves legacy RPM telemetry and the permanent OTA recovery protocol. Both directions of mixed-version operation were physically tested; the owner confirmed the new graphics and all fields. See the [information cockpit report](2026-09-28-information-cockpit.md) for exact images, measurements and limitations. Real BMW decoding remains pending.

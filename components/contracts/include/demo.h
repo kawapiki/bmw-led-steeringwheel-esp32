@@ -4,6 +4,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "cockpit.h"
+#include "lighting.h"
 typedef enum {
   INTENT_SERVICE,
   INTENT_CHECK,
@@ -18,7 +20,17 @@ typedef struct {
   bool standalone;
 } intent_t;
 typedef enum { KEY_NEXT, KEY_SELECT, KEY_BACK, KEY_CONFIRM } demo_key_t;
+typedef enum {
+  DEMO_SOURCE_NONE, DEMO_SOURCE_GATEWAY_DEMO, DEMO_SOURCE_VEHICLE
+} demo_telemetry_source_t;
 typedef struct {
+  demo_telemetry_source_t telemetry_source;
+  uint16_t telemetry_valid, speed_dkph;
+  uint8_t lights_valid, lights_on, lights_source;
+  uint32_t lights_sequence;
+  uint64_t lights_received;
+  uint8_t gear, closure_open;
+  int16_t coolant_c, oil_c;
   uint32_t rpm, buttons[2], input_drops, flushes, flush_us, ui_period_us;
   uint64_t input_heartbeat, ui_heartbeat, telemetry_received;
   bool pressed[2], sensor_ok, link_secure, maintenance, writing, offer;
