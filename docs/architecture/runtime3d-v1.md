@@ -23,3 +23,7 @@ Require actual-mesh host captures, incremental/full LVGL pixel comparison, lates
 ## Surface lighting
 
 Light pools are bounded, layered world-space polygons on a virtual ground plane. Only emissive lamp faces receive a dim mirrored reflection, avoiding a second full-car render. These are stylized reflection cues, not ray-traced illumination. Both live gateway lighting and the decorative boot angel eyes use these effects. They use the same depth-tested renderer and do not allocate per-frame buffers.
+
+## Black metallic paint
+
+Per-face material IDs distinguish black body paint, dark neutral glass and original trim/lamp/badge materials. The ID occupies existing triangle-struct padding (40 bytes per triangle); geometry remains 2498 triangles. Paint uses a bounded camera-relative studio highlight computed from transformed face normals, with an additive neutral clearcoat cue independent of the black base. This avoids TGX's multiplicative material color suppressing highlights on black paint. Glass retains subdued diffuse lighting; chrome and roundels retain their colors. Boot reveal and incomplete-state dimming also apply to paint. The low-poly mesh remains visibly faceted; this is stylized metallic lighting, not physically based rendering. No new textures, buffers or frame allocations are introduced.

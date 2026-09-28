@@ -125,10 +125,10 @@ for name, group, radius in [('Circle', 6, .080), ('Circle.001', 5, .075)]:
         for outer, inner, color in [(1, .89, 0xc618), (.89, .61, 0x0841)]:
             p0, p1 = point(radius * outer, a), point(radius * outer, b)
             p2, p3 = point(radius * inner, b), point(radius * inner, a)
-            roundels.extend([([p0, p1, p2], color, group), ([p0, p2, p3], color, group)])
+            roundels.extend([([p0, p1, p2], color, group, 0), ([p0, p2, p3], color, group, 0)])
         # White upper-right/lower-left; blue upper-left/lower-right.
         color = 0xffff if (i // 4) % 2 == 0 else 0x045f
-        roundels.append(([center.copy(), point(radius * .61, a), point(radius * .61, b)], color, group))
+        roundels.append(([center.copy(), point(radius * .61, a), point(radius * .61, b)], color, group, 0))
     roundel_metadata.append({'source_object': name, 'group': group,
                              'center': list(center), 'normal': list(normal),
                              'radius': radius, 'triangles': 80})
@@ -181,7 +181,12 @@ def extract(scale, include_colors=False):
                 face_group = 13 if center_x >= 0 else 14
             elif name == 'Plane.004':
                 face_group = 15 if center_x >= 0 else 16
-            triangles.append((points, rgb565(face_rgb(mesh, triangle)) if include_colors else 0, face_group))
+            material_name = mesh.materials[triangle.material_index].name if mesh.materials and mesh.materials[triangle.material_index] else ''
+            material = 1 if material_name == 'Cockpit silver blue' else 2 if material_name == 'Dark tinted glass' else 0
+            # Classification is per face, never per parent/closure: badges,
+            # lamp lenses and wheels retain their original materials.
+            rgb = (.14, .15, .16) if material == 1 else (.075, .09, .105) if material == 2 else face_rgb(mesh, triangle) if include_colors else (0, 0, 0)
+            triangles.append((points, rgb565(rgb) if include_colors else 0, face_group, material))
             kept += 1
         counts[name] = kept
         evaluated.to_mesh_clear()
@@ -201,23 +206,23 @@ triangles.extend(roundels)
 counts['Roundel hood'] = 80
 counts['Roundel trunk'] = 80
 assert 1000 <= len(triangles) <= MAX_TRIANGLES
-assert set(range(17)).issubset({group for _, _, group in triangles})
+assert set(range(17)).issubset({group for _, _, group, _ in triangles})
 # Quantization is deliberately fine enough to avoid moving visible panel edges.
 lines = ['// BMW E90 by rifdanzz / Rifdan Adidan, CC BY 4.0.',
          '// Derived from assets/ui/e90/prepared.blend; see ATTRIBUTION.md and mesh-manifest.json.',
          '#pragma once', '#include <stdint.h>',
-         'struct E90Triangle { float v[9]; uint16_t color; uint8_t group; };',
+         'struct E90Triangle { float v[9]; uint16_t color; uint8_t group; uint8_t material; };',
          'static const E90Triangle e90_triangles[] = {']
-for points, color, group in triangles:
+for points, color, group, material in triangles:
     values = ','.join(f'{float(c):.6f}f' for point in points for c in point)
-    lines.append('  {{' + values + f'}},0x{color:04x},{group}' + '},')
+    lines.append('  {{' + values + f'}},0x{color:04x},{group},{material}' + '},')
 lines += ['};', 'static const float e90_wheel_pivots[4][3] = {']
 for pivot in wheel_pivots:
     lines.append('  {' + ','.join(f'{c:.6f}f' for c in pivot) + '},')
 lines += ['};', '#define E90_TRIANGLE_COUNT (sizeof(e90_triangles) / sizeof(e90_triangles[0]))', '']
 HEADER.write_text('\n'.join(lines), encoding='utf-8')
-bounds = [[min(p[axis] for points, _, _ in triangles for p in points),
-           max(p[axis] for points, _, _ in triangles for p in points)] for axis in range(3)]
+bounds = [[min(p[axis] for points, _, _, _ in triangles for p in points),
+           max(p[axis] for points, _, _, _ in triangles for p in points)] for axis in range(3)]
 manifest = {
     'contract': 'runtime3D1', 'source': 'assets/ui/e90/prepared.blend',
     'source_sha256': source_hash, 'source_modified': False,
@@ -229,14 +234,17 @@ manifest = {
     'expected_array_bytes': len(triangles) * 40,
     'header_sha256': hashlib.sha256(HEADER.read_bytes()).hexdigest(),
     'coordinate_convention': 'world/rest coordinates; front -Y; up +Z; left +X',
-    'bounds_xyz': bounds, 'groups': dict(sorted(Counter(g for _, _, g in triangles).items())),
+    'bounds_xyz': bounds, 'groups': dict(sorted(Counter(g for _, _, g, _ in triangles).items())),
     'objects': counts, 'collapse_scale': lo,
     'wheel_group_order': '9 FL, 10 FR, 11 RL, 12 RR',
     'lamp_groups': {'13': 'lampudepan front left (+X)', '14': 'lampudepan front right (-X)', '15': 'Plane.004 rear left (+X)', '16': 'Plane.004 rear right (-X)'},
     'wheel_pivots_xyz': wheel_pivots,
     'roundels': roundel_metadata,
+    'materials': {'0': 'other', '1': 'black body paint', '2': 'dark tinted glass'},
+    'material_counts': dict(sorted(Counter(m for _, _, _, m in triangles).items())),
+    'paint_base_srgb': [.14, .15, .16],
     'simplification': 'Per-object Blender collapse decimation, weighted lower for wheels/illustrative lamps, higher for windows; binary-searched total budget; source badge meshes replaced by 160 explicitly reserved roundel triangles; all other objects and closure groups retained.',
-    'color': 'RGB565 base material, or three interior UV texture samples per triangle; runtime flat lighting is separate.',
+    'color': 'RGB565 base material/UV samples; body paint near-black sRGB (.14,.15,.16). Explicit per-face material ID allows runtime metallic/clearcoat lighting; material does not change geometry.',
     'rest_reset': 'Vehicle motion root translation/rotation/scale; six closure pivot rotations; wheel pivot rotations; scene animation cleared in memory.',
     'limitations': 'Simplified community model; not measured BMW geometry. Fine texture detail approximated by flat per-face colors. Hood/trunk roundels are exaggerated geometric derivatives (chrome outline, black ring, blue/white center), not readable lettering. No device performance claim.',
     'export_command': 'blender --background --factory-startup --disable-autoexec assets/ui/e90/prepared.blend --python tools/assets/export_e90_mesh.py'

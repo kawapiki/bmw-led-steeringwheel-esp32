@@ -9,10 +9,10 @@
   "license_url": "https://creativecommons.org/licenses/by/4.0/",
   "triangles": 2498,
   "triangle_budget": 2500,
-  "header_bytes": 276791,
+  "header_bytes": 281805,
   "expected_struct_bytes": 40,
   "expected_array_bytes": 99920,
-  "header_sha256": "d849d4b9e845640a9ae2d03a26fd8ab594506db5406b528ccf11914883d0e2b8",
+  "header_sha256": "6cc7af0d5bcc1a144c5d2b455bf1b41c64d8084b1ac53ed9b63022da800710df",
   "coordinate_convention": "world/rest coordinates; front -Y; up +Z; left +X",
   "bounds_xyz": [
     [
@@ -162,8 +162,23 @@
       "triangles": 80
     }
   ],
+  "materials": {
+    "0": "other",
+    "1": "black body paint",
+    "2": "dark tinted glass"
+  },
+  "material_counts": {
+    "0": 1257,
+    "1": 1146,
+    "2": 95
+  },
+  "paint_base_srgb": [
+    0.14,
+    0.15,
+    0.16
+  ],
   "simplification": "Per-object Blender collapse decimation, weighted lower for wheels/illustrative lamps, higher for windows; binary-searched total budget; source badge meshes replaced by 160 explicitly reserved roundel triangles; all other objects and closure groups retained.",
-  "color": "RGB565 base material, or three interior UV texture samples per triangle; runtime flat lighting is separate.",
+  "color": "RGB565 base material/UV samples; body paint near-black sRGB (.14,.15,.16). Explicit per-face material ID allows runtime metallic/clearcoat lighting; material does not change geometry.",
   "rest_reset": "Vehicle motion root translation/rotation/scale; six closure pivot rotations; wheel pivot rotations; scene animation cleared in memory.",
   "limitations": "Simplified community model; not measured BMW geometry. Fine texture detail approximated by flat per-face colors. Hood/trunk roundels are exaggerated geometric derivatives (chrome outline, black ring, blue/white center), not readable lettering. No device performance claim.",
   "export_command": "blender --background --factory-startup --disable-autoexec assets/ui/e90/prepared.blend --python tools/assets/export_e90_mesh.py"

@@ -12,7 +12,7 @@ namespace {
 constexpr unsigned W = VEHICLE_3D_WIDTH, H = VEHICLE_3D_HEIGHT;
 constexpr auto SH = tgx::SHADER_ORTHO | tgx::SHADER_ZBUFFER | tgx::SHADER_FLAT |
                     tgx::SHADER_NOTEXTURE;
-tgx::Renderer3D<tgx::RGB565, SH | tgx::SHADER_UNLIT, uint16_t> renderer;
+tgx::Renderer3D<tgx::RGB565, SH | tgx::SHADER_UNLIT, uint16_t, 1> renderer;
 tgx::Image<tgx::RGB565> image;
 lv_image_dsc_t descriptor;
 uint16_t *pixels, *depth;
@@ -96,7 +96,7 @@ extern "C" bool vehicle_3d_init(void) {
   renderer.setCulling(0);
   renderer.setOrtho(-3.25f, 3.25f, -1.7604f, 1.7604f, 1, 30);
   renderer.setLight(tgx::fVec3(-1, -2, -4), tgx::RGBf(.55f, .55f, .65f),
-                    tgx::RGBf(.7f, .7f, .7f), tgx::RGBf(0, 0, 0));
+                    tgx::RGBf(.7f, .7f, .7f), tgx::RGBf(2.f, 2.f, 2.f));
   descriptor.header.magic = LV_IMAGE_HEADER_MAGIC;
   descriptor.header.cf = LV_COLOR_FORMAT_RGB565;
   descriptor.header.w = W;
@@ -292,6 +292,34 @@ extern "C" const lv_image_dsc_t *vehicle_3d_frame(uint64_t now, bool boot,
         emissive = true;
       }
     }
+    if (t.material == 1 && !emissive) {
+      // Clearcoat is additive: TGX's base-color multiplication otherwise
+      // suppresses white highlights on black paint. Camera-relative studio
+      // strips keep the silhouette readable as doors and the camera move.
+      auto a = v[1] - v[0], b = v[2] - v[0];
+      float nx = a.y * b.z - a.z * b.y;
+      float ny = a.z * b.x - a.x * b.z;
+      float nz = a.x * b.y - a.y * b.x;
+      float length = sqrtf(nx * nx + ny * ny + nz * nz);
+      if (length > .000001f) {
+        nx /= length;
+        ny /= length;
+        nz /= length;
+      }
+      float side = nx * cosf(az) + ny * sinf(az);
+      float facing =
+          nx * sinf(az) * cosf(el) - ny * cosf(az) * cosf(el) + nz * sinf(el);
+      float strip = fabsf(.50f * side + .70f * facing + .50f * nz);
+      strip = fminf(1.f, strip);
+      float gloss = strip * strip;
+      gloss *= gloss;
+      gloss *= gloss;
+      float value =
+          .065f + .10f * fabsf(nz) + .055f * fabsf(facing) + .32f * gloss;
+      color = (uint16_t)((unsigned)(31 * value) << 11 |
+                         (unsigned)(63 * value) << 5 |
+                         (unsigned)(31 * fminf(1.f, value * 1.04f)));
+    }
     if (!emissive)
       color = dim_color(color, reveal);
     if (emissive) {
@@ -305,16 +333,19 @@ extern "C" const lv_image_dsc_t *vehicle_3d_frame(uint64_t now, bool boot,
       renderer.drawTriangle(reflected[0], reflected[1], reflected[2]);
       material_key = 0xffffffff;
     }
-    uint32_t key = color | (emissive ? 0x10000u : 0);
+    uint32_t key =
+        color | (emissive ? 0x10000u : 0) | ((uint32_t)t.material << 17);
     if (key != material_key) {
-      if ((key ^ material_key) & 0x10000u) {
-        renderer.setShaders(emissive
+      if ((key ^ material_key) & 0x70000u) {
+        renderer.setShaders((emissive || t.material == 1)
                                 ? (tgx::SHADER_ORTHO | tgx::SHADER_ZBUFFER |
                                    tgx::SHADER_UNLIT | tgx::SHADER_NOTEXTURE)
                                 : SH);
-        renderer.setMaterial(tgx::RGBf(tgx::RGB565(color)),
-                             emissive ? 1.f : .65f, emissive ? 0.f : .75f, 0,
-                             0);
+        renderer.setMaterial(
+            tgx::RGBf(tgx::RGB565(color)),
+            (emissive || t.material == 1) ? 1.f : (t.material ? .45f : .65f),
+            emissive ? 0.f : (t.material ? .45f : .75f),
+            0.f, 0);
       } else
         renderer.setMaterialColor(tgx::RGBf(tgx::RGB565(color)));
       material_key = key;
