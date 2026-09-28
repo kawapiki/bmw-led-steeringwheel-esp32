@@ -1,5 +1,6 @@
 #include "ble_link.h"
 #include "demo.h"
+#include "telemetry_v1.h"
 #include "wheel_core.h"
 
 #include "esp_random.h"
@@ -26,7 +27,12 @@ static const ble_uuid128_t app_svc = BLE_UUID128_INIT(
 static const ble_uuid128_t app_chr = BLE_UUID128_INIT(
     0x19, 0x09, 0x90, 0xe9, 0x01, 0, 0, 0x80, 0, 0x10, 0, 0, 4, 0, 0, 0x90);
 static uint16_t app_handle;
-static uint32_t telemetry[4] = {1, 0, 800, 0};
+static uint8_t telemetry[16];
+static uint32_t telemetry_sequence;
+static telemetry_v1_tracker_t telemetry_tracker;
+static uint32_t app_request, app_session;
+static uint64_t app_requested, app_polled;
+static bool app_pending, recovery_busy, app_discovered;
 static bool central, secure, have_peer, ready;
 static ble_addr_t approved;
 static uint16_t conn = BLE_HS_CONN_HANDLE_NONE, handle;
@@ -46,10 +52,14 @@ static portMUX_TYPE lock = portMUX_INITIALIZER_UNLOCKED;
 static void publish(demo_state_t *s, void *a) {
   (void)a;
   s->link_secure = secure;
-  if (!secure)
+  if (!secure) {
     s->app_compatible = false;
-  s->telemetry_fresh = telemetry_is_fresh(secure, s->app_compatible,
-                                          s->telemetry_received, demo_ms());
+    s->telemetry_source = DEMO_SOURCE_NONE;
+    s->telemetry_received = 0;
+  }
+  s->telemetry_fresh = !s->maintenance && !s->writing &&
+      telemetry_is_fresh(secure, s->app_compatible,
+                         s->telemetry_received, demo_ms());
 }
 static bool authenticated(uint16_t c) {
   struct ble_gap_conn_desc d;
@@ -103,7 +113,7 @@ static int app_access(uint16_t c, uint16_t h, struct ble_gatt_access_ctxt *ctx,
   (void)a;
   if (!authenticated(c))
     return BLE_ATT_ERR_INSUFFICIENT_AUTHEN;
-  uint32_t copy[4];
+  uint8_t copy[16];
   portENTER_CRITICAL(&lock);
   memcpy(copy, telemetry, sizeof(copy));
   portEXIT_CRITICAL(&lock);
@@ -160,6 +170,8 @@ static int chars(uint16_t c, const struct ble_gatt_error *e,
       app_handle = v->val_handle;
   } else if (e->status == BLE_HS_EDONE && !a)
     ble_gattc_disc_svc_by_uuid(c, &app_svc.u, services_found, (void *)1);
+  else if (e->status == BLE_HS_EDONE && a)
+    app_discovered = true;
   return 0;
 }
 static int services_found(uint16_t c, const struct ble_gatt_error *e,
@@ -199,6 +211,12 @@ static int gap(struct ble_gap_event *e, void *a) {
     recovery_message_t discarded;
     while (xQueueReceive(incoming, &discarded, 0) == pdTRUE)
       demo_clear(&discarded, sizeof(discarded));
+    portENTER_CRITICAL(&lock);
+    app_pending = false;
+    app_discovered = false;
+    app_request++;
+    memset(&telemetry_tracker, 0, sizeof(telemetry_tracker));
+    portEXIT_CRITICAL(&lock);
     app_handle = 0;
     handle = central ? 0 : handle;
     demo_clear(&assembly, sizeof(assembly));
@@ -252,9 +270,12 @@ static void supervise(void *a) {
   size_t len = sizeof(approved);
   have_peer = nvs_get_blob(n, "peer", &approved, &len) == ESP_OK &&
               len == sizeof(approved);
+  uint64_t next_seek = 0;
   for (;;) {
-    if (ready && conn == BLE_HS_CONN_HANDLE_NONE)
+    if (ready && conn == BLE_HS_CONN_HANDLE_NONE && demo_ms() >= next_seek) {
       seek();
+      next_seek = demo_ms() + 1000;
+    }
     if (recovery_auth_expired(conn != BLE_HS_CONN_HANDLE_NONE,
                               secure && (!central || handle), connected_at,
                               demo_ms())) {
@@ -280,13 +301,19 @@ static void supervise(void *a) {
           ble_gap_terminate(conn, BLE_ERR_AUTH_FAIL);
       }
     }
-    portENTER_CRITICAL(&lock);
-    telemetry[1]++;
-    telemetry[2] = 800 + (demo_ms() % 12000) * 6200 / 12000;
-    telemetry[3] = demo_ms();
-    portEXIT_CRITICAL(&lock);
+    if (!central) {
+      uint32_t now = (uint32_t)demo_ms(), t = now % 18000;
+      uint32_t rpm = t < 12000 ? 800 + t * 6200 / 12000
+                     : t < 14000 ? 7000
+                     : 7000 - (t - 14000) * 6200 / 4000;
+      portENTER_CRITICAL(&lock);
+      telemetry_v1_encode(telemetry, ++telemetry_sequence, rpm, now);
+      portEXIT_CRITICAL(&lock);
+    }
     demo_edit(publish, NULL);
-    vTaskDelay(pdMS_TO_TICKS(1000));
+    if (central)
+      ble_link_poll_telemetry();
+    vTaskDelay(pdMS_TO_TICKS(100));
   }
 }
 void ble_link_start(bool wheel) {
@@ -333,9 +360,38 @@ static int written(uint16_t c, const struct ble_gatt_error *e,
   xSemaphoreGive(completed);
   return 0;
 }
+/* Serialize ATT application reads against recovery procedures. Set the gate
+ * before waiting so a 100ms poll cannot start between observing idle and the
+ * first recovery request. Existing recovery callers remain one worker owner. */
+static bool recovery_enter(void) {
+  portENTER_CRITICAL(&lock);
+  recovery_busy = true;
+  portEXIT_CRITICAL(&lock);
+  uint64_t until = demo_ms() + 2500;
+  for (;;) {
+    portENTER_CRITICAL(&lock);
+    bool pending = app_pending;
+    portEXIT_CRITICAL(&lock);
+    if (!pending) return true;
+    if (demo_ms() >= until) {
+      portENTER_CRITICAL(&lock);
+      recovery_busy = false;
+      portEXIT_CRITICAL(&lock);
+      ble_gap_terminate(conn, BLE_ERR_REM_USER_CONN_TERM);
+      return false;
+    }
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
+}
+static void recovery_leave(void) {
+  portENTER_CRITICAL(&lock);
+  recovery_busy = false;
+  portEXIT_CRITICAL(&lock);
+}
 bool ble_link_send(const recovery_message_t *m) {
   if (!central || !ble_link_secure() || m->size > 152)
     return false;
+  if (!recovery_enter()) return false;
   for (size_t off = 0; off < m->size;) {
     uint8_t p[20] = {(uint8_t)off, (uint8_t)m->size};
     size_t n = m->size - off;
@@ -349,10 +405,12 @@ bool ble_link_send(const recovery_message_t *m) {
       operation++;
       secure = false;
       ble_gap_terminate(conn, BLE_ERR_REM_USER_CONN_TERM);
+      recovery_leave();
       return false;
     }
     off += n;
   }
+  recovery_leave();
   return true;
 }
 bool ble_link_receive(recovery_message_t *m) {
@@ -407,25 +465,87 @@ static bool read_attribute(uint16_t attribute, uint8_t *d, size_t *n) {
 }
 
 bool ble_link_read(uint8_t *d, size_t *n) {
-  return read_attribute(handle, d, n);
+  if (!recovery_enter()) return false;
+  bool ok = read_attribute(handle, d, n);
+  recovery_leave();
+  return ok;
 }
 static void telemetry_state(demo_state_t *s, void *a) {
-  uint32_t *p = a;
-  s->app_compatible = p[0] == 1;
-  if (s->ble_sequence != p[1] || !s->telemetry_received)
-    s->telemetry_received = demo_ms();
-  s->telemetry_fresh = telemetry_is_fresh(s->link_secure, s->app_compatible,
-                                          s->telemetry_received, demo_ms());
-  s->ble_sequence = p[1];
-  s->ble_rpm = p[2];
+  const telemetry_v1_sample_t *p = a;
+  if (!s->link_secure || s->maintenance || s->writing)
+    return;
+  s->app_compatible = true;
+  s->telemetry_source = DEMO_SOURCE_GATEWAY_DEMO;
+  s->telemetry_received = p->received;
+  s->ble_sequence = p->sequence;
+  s->ble_rpm = p->rpm;
+  s->telemetry_fresh = telemetry_is_fresh(true, true, p->received, demo_ms());
+}
+static void telemetry_incompatible(demo_state_t *s, void *a) {
+  (void)a;
+  s->app_compatible = false;
+  s->telemetry_fresh = false;
+  s->telemetry_source = DEMO_SOURCE_NONE;
+}
+/* Application reads have their own callback/token; they never touch the
+ * recovery operation, completion semaphore or response buffers. */
+static int app_read_done(uint16_t c, const struct ble_gatt_error *e,
+                         struct ble_gatt_attr *v, void *a) {
+  uint32_t token = (uint32_t)(uintptr_t)a;
+  uint8_t packet[16];
+  uint16_t length = 0;
+  bool wire_ok = !e->status && v && v->offset == 0 &&
+                 !ble_hs_mbuf_to_flat(v->om, packet, sizeof(packet), &length);
+  telemetry_v1_sample_t sample;
+  bool accepted = false, incompatible = false;
+  portENTER_CRITICAL(&lock);
+  if (app_pending && token == app_request) {
+    app_pending = false;
+    if (c == conn && app_session == connection_nonce && secure && wire_ok) {
+      incompatible = length == 16 &&
+                     (packet[0] != 1 || packet[1] || packet[2] || packet[3]);
+      accepted = telemetry_v1_accept(&telemetry_tracker, app_session,
+                                    packet, length, app_requested, demo_ms(),
+                                    &sample);
+    }
+  }
+  portEXIT_CRITICAL(&lock);
+  if (accepted)
+    demo_edit(telemetry_state, &sample);
+  else if (incompatible)
+    demo_edit(telemetry_incompatible, NULL);
+  return 0;
 }
 void ble_link_poll_telemetry(void) {
-  if (!central || !app_handle || !ble_link_secure())
+  if (!central || !app_handle || !app_discovered || !ble_link_secure())
     return;
-  uint32_t t[4];
-  size_t n = sizeof(t);
-  if (read_attribute(app_handle, (uint8_t *)t, &n) && n == sizeof(t))
-    demo_edit(telemetry_state, t);
+  demo_state_t state;
+  demo_get(&state);
+  /* Recovery/OTA owns the link in maintenance; no new application operation. */
+  if (state.maintenance || state.writing)
+    return;
+  uint64_t now = demo_ms();
+  uint32_t token = 0;
+  bool expired = false;
+  portENTER_CRITICAL(&lock);
+  if (app_pending) {
+    expired = !recovery_busy && now - app_requested > 2500;
+  } else if (!recovery_busy && now - app_polled >= 100) {
+    app_pending = true;
+    app_requested = app_polled = now;
+    app_session = connection_nonce;
+    token = ++app_request;
+    if (!token) token = ++app_request;
+  }
+  portEXIT_CRITICAL(&lock);
+  if (expired) {
+    ble_gap_terminate(conn, BLE_ERR_REM_USER_CONN_TERM);
+  } else if (token && ble_gattc_read(conn, app_handle, app_read_done,
+                                   (void *)(uintptr_t)token)) {
+    portENTER_CRITICAL(&lock);
+    if (token == app_request) app_pending = false;
+    portEXIT_CRITICAL(&lock);
+  }
 }
 bool ble_link_ready(void) { return ready; }
 

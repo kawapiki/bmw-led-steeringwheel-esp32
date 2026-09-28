@@ -7,15 +7,15 @@
 #include "service_wifi.h"
 #include "update_manager.h"
 #include "wheel_io.h"
+#include "wheel_core.h"
 #include "wheel_ui.h"
 static void rpm(demo_state_t *s, void *a) {
   (void)a;
-  if (s->maintenance)
-    return;
-  uint32_t t = demo_ms() % 18000;
-  s->rpm = t < 12000   ? 800 + t * 6200 / 12000
-           : t < 14000 ? 7000
-                       : 7000 - (t - 14000) * 6200 / 4000;
+  bool valid = !s->maintenance && !s->writing &&
+      s->telemetry_source != DEMO_SOURCE_NONE &&
+      telemetry_is_fresh(s->link_secure, s->app_compatible,
+                         s->telemetry_received, demo_ms());
+  s->rpm = valid ? s->ble_rpm : 0;
 }
 static void source(void *a) {
   (void)a;
@@ -43,6 +43,6 @@ void app_main(void) {
   service_wifi_init();
   ble_link_start(true);
   update_manager_start(true);
-  configASSERT(xTaskCreatePinnedToCore(source, "demo_source", 3072, NULL, 3,
+  configASSERT(xTaskCreatePinnedToCore(source, "telemetry_view", 3072, NULL, 3,
                                        NULL, 0) == pdPASS);
 }
