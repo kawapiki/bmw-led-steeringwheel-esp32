@@ -1,39 +1,51 @@
-# Real E90 closure view and boot scene
+# Operational E90 cockpit and dynamic 3D view
 
-The supplied source is now imported and rendered using Blender5.2.1 LTS. Original model/texture and CC BY4.0 attribution are in [assets/ui/e90](../../../assets/ui/e90/ATTRIBUTION.md). Original ZIP SHA256: fa702396d7fa54054831ff67823b010e90521b221e2625b4222888b36edd6eb9.
+The wheel renders gateway telemetry with LVGL and TGX 1.1.4 on ESP-IDF 6.1. Only the gateway simulates vehicle data; BMW CAN decoding/electrical compatibility and seat control remain unqualified. The original firmware backup is unchanged.
 
-## Implemented asset preparation
+## Native-size gallery
 
-The model has separate mirrored door/window meshes. The generator applies modifiers, splits left/right panels, sets front hinges, and groups the hood/trunk with their badges. The in-scene author text is removed from derived renders; attribution is retained in the repository. Opaque dark glass and an interior tub hide empty areas, and materials/light are adjusted for the small display. The original source remains unchanged.
+These 320x172 images are captures of the actual production LVGL/TGX code running in the host harness, not photographs of the physical display. They illustrate appearance; they do not prove display FPS or LED brightness.
 
-Closure views select left/right front-quarter for one-sided openings, rear-quarter for trunk-only, and front overview for mixed sides. This supersedes the earlier top-down proposal after the owner requested hiding the empty cabin. The scene includes all six open-panel combinations (64masks). Open angles are illustrative, not measured door angles. Unknown input must retain explicit last-known/unknown text, not assert that unseen panels are closed.
+### Drive: speed, RPM, gear and temperatures
 
-Boot sequence: real model moves into view with wheel rotation, camera makes a360-degree orbit, and the front lamps flash at the end. It is a one-time, interruptible presentation. Real fresh closure alerts, user input and maintenance/OTA take priority. Synthetic demo alerts are deferred until the short intro ends so it can be observed on the bench.
+![Drive instruments](runtime-renders/current-drive-108-D5.png)
 
-## Runtime and asset limits
+### Boot: angel eyes, black metallic body reveal, then drift
 
-The firmware displays real-model pre-rendered images, not a runtime3D engine. 28boot frames and64closure frames, each192x104RGB565, occupy exactly3,674,112bytes. No decompression framebuffer or per-frame asset allocation is needed. Source frames are flash-backed; existing partial LCD DMA buffers remain. Nominal boot frame interval50ms (20fps target) is not a measured panel-FPS guarantee. Closure states currently change to their selected camera view directly; smooth live camera interpolation between arbitrary masks is not implemented in this increment.
+![Dark frontal intro](runtime-renders/current-runtime-boot-03.png)
 
-Build tools: tools/assets/render_e90.py (Blender) and tools/assets/pack_e90.py (Python/Pillow). Exact asset checksum is in asset-manifest.json. Source model and textured license provenance are separate from generated firmware data.
+### Automatic opening view with subtly red open-door paint
 
-## Vehicle lights
+![Open front-left door](runtime-renders/current-closure-FL.png)
 
-Angel-eye/high-beam geometry is present for the boot demonstration. Live headlights, angel eyes, left/right indicators and brake lights are NOT yet available in the gateway telemetry. Their active state must remain unknown until validated decode, timestamps and per-field validity are supplied. Do not infer brakes from RPM/speed or animate fictitious turn signals as live vehicle data. A future additive lighting characteristic/asset-overlay contract can preserve the frozen recovery protocol and older peers. Actual light-state behavior is pending; the boot flash does not establish vehicle control or CAN reception.
+Fresh known openings automatically show the car from Drive/Sport; closing returns to the underlying instrument page. RPM, temperatures and other valid telemetry continue independently. RPM remains visible on the LED strips. Service/OTA takes priority; unknown closure state never becomes a false closed state.
 
-## Verification
+### On-model indicators, including front fenders
 
-Runtime policy tests, real LVGL image rendering, flash fit, heap behavior and physical boot/door observation are required. [Runtime integration notes](runtime-plan.md). Measured bench results are recorded separately; desktop renders alone do not prove performance.
+![Left indicators and ground lighting](runtime-renders/current-runtime-actual-lamp-3.png)
 
-## Runtime 3D direction
+### Rear brake lamps and reflected light
 
-The owner subsequently asked whether a real3D renderer would be preferable. It is the recommended direction for continuous camera motion and independently articulated lights/panels; this frame atlas is a tested fallback/prototype, not a claim that runtime3D has been implemented. The modified Blender model can be simplified and exported to a bounded mesh. Evaluate TGX with a small RGB565 viewport and depth buffer, verify the board's PSRAM configuration, and measure input/BLE/LED behavior before replacing the renderer. Do not infer FPS from desktop tests or allocate a full scene buffer in the remaining TLS heap.
+![Rear lamps](runtime-renders/current-runtime-actual-lamp-5.png)
 
-The operational wheel versus gateway-simulator boundary is renderer-independent and is fixed by docs/architecture/operational-wheel-lighting-v1.md. Vehicle lighting received over BLE must drive the wheel presentation directly; decorative boot lamps must never be confused with actual received lamp state.
+## Current rendering and controls
 
-## Runtime3D implementation
+The actual 3100-triangle E90 mesh has independently articulated doors, hood and trunk, rotating wheels, and geometric hood/trunk roundels. Wheels retain 261–262 triangles each. Camera focus follows openings and active lights. Black paint uses bounded metallic highlight cues; glass and trim have separate materials. Lamp emission and stylized ground reflections follow valid incoming state, including the gateway blink phase. Successful 3D scenes use the full screen without text or separate lamp icons.
 
-The wheel now links TGX1.1.4 and the2498-triangle `e90_mesh.h` exported by `tools/assets/export_e90_mesh.py`; the frame atlas is not linked. See [runtime3D architecture](../../architecture/runtime3d-v1.md). Source/model attribution remains unchanged. Dynamic camera, panel transforms, wheel rotation and normalized lamp states replace frame selection.
+The interruptible five-second intro starts dark/front-on, illuminates angel eyes, reveals and zooms the body, then drifts out of view. This is a decorative boot sequence, separate from live vehicle state.
 
-### Hood and trunk roundels
+Each LED chain reserves physical pixel 0 for its button and pixels 1–23 for RPM. The bar has amber low-RPM indication, green progression and four increasingly red end pixels. Fractional coverage fades the boundary pixel in both directions. The accelerating falling peak blends between adjacent pixels. Invalid/stale or maintenance data clears the RPM effect. The gateway keeps RPM changing during stationary/P door demonstrations.
 
-The runtime exporter replaces the two texture-averaged badge meshes with blue/white quartered geometric roundels, black rings and chrome outlines. Each uses 80 triangles, explicitly reserved within the unchanged 2,498-triangle total. Groups 6 (hood) and 5 (trunk) preserve the existing panel transforms. Native-scale captures are in `runtime-renders/badge-*.png`; lettering is not legible at this resolution. The original Blender source remains unchanged.
+## Resources and evidence
+
+One UI task owns TGX and LVGL. RGB565/depth buffers occupy 220,160 bytes of PSRAM; existing internal LCD DMA buffers remain separate. Geometry occupies 124,000 bytes plus wheel pivots. No per-frame allocation or new texture buffers. Static scenes stop rendering; service/OTA pauses 3D.
+
+Latest joint bench results: CPU render average 67.619 ms, maximum 81.526 ms; internal heap minimum 76,100 bytes and UI stack low-water 1,052 bytes. These are CPU measurements, not panel FPS or input-latency qualification. Both USB application writes and boot self-tests passed. Exact-build Wi-Fi/OTA requalification and visual confirmation of the newest LED smoothness remain pending.
+
+- [Latest telemetry/LED validation and image hashes](../../validation/2026-09-28-smooth-rpm.md)
+- [Wheel detail validation](../../validation/2026-09-28-wheel-detail.md)
+- [Runtime architecture](../../architecture/runtime3d-v1.md)
+- [Operational wheel and lighting contract](../../architecture/operational-wheel-lighting-v1.md)
+- [Model attribution and license](../../../assets/ui/e90/ATTRIBUTION.md)
+
+The original Blender source is unchanged. The community mesh, hinge angles, lamp division and exaggerated roundels are illustrative, not measured BMW CAD. Model attribution remains required. The earlier frame atlas and runtime-plan.md are historical prototypes, no longer linked into firmware. The frozen OTA recovery protocol remains backward compatible; this work does not enable CAN transmission or seat motion.
