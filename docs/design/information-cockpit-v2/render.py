@@ -91,4 +91,3 @@ for y,row in enumerate(rows):
  for x,n in enumerate(row):im.paste(Image.open(O/f'{n}.png'),(8+x*336,48+y*208));txt(d,8+x*336,222+y*208,n,12,MUT)
 im.save(O/'comparison.png')
 print('10 native previews plus comparison')
-

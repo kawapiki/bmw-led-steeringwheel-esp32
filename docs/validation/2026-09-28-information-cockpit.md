@@ -46,3 +46,7 @@ The optimized wheel IDF6.1 build and both-image slot/chip/security audit passed.
 ## Final physical timing window
 
 A 75-second USB-only capture with the final hashes above recorded authenticated full-validity Demo telemetry and both boot self-tests. Moving Drive windows (approximately20–61s after boot) had mean UI loop periods7,957–9,110us and mean handler times2,669–3,755us, compared with the initial renderer's approximately28–32ms/22–26ms. Moving-window maximum handlers were59,221–77,478us. Full-page/overlay transitions remain costlier: observed128,563us leaving the first closure sequence and137,928us entering the next. These window statistics do not establish FPS or button-to-photon latency and are not an endurance qualification. Minimum free heap remained80,196bytes; no panic/assert was observed in this capture.
+
+## Final Wi-Fi regression
+
+With the final optimized wheel running, the owner opened Service / Update and initiated release discovery using the saved Wi-Fi network. Logs show Checking signed GitHub releases at213,374ms and No newer authenticated release at240,719ms (27.345s); the owner confirmed the same on-screen result. No newer firmware was installed in this check. Minimum free heap fell to7,424bytes during Wi-Fi/TLS work, so service-mode memory headroom remains limited and deserves continued monitoring. This check validates discovery beside the new UI, not a new full paired OTA cycle; the previous signed-r4 paired OTA evidence remains separate.
