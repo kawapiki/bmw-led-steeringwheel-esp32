@@ -2,6 +2,8 @@
 #include "lvgl.h"
 #include <stdbool.h>
 #include <stdint.h>
+#define VEHICLE_3D_WIDTH 320u
+#define VEHICLE_3D_HEIGHT 172u
 #ifdef __cplusplus
 extern "C" {
 #endif

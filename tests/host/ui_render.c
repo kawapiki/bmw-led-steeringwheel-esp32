@@ -200,7 +200,7 @@ static void verify_source_equivalence(void) {
        "closure masks");
 }
 static void verify_engine_pixels(void) {
-  uint16_t before[192 * 104];
+  uint16_t before[VEHICLE_3D_WIDTH * VEHICLE_3D_HEIGHT];
   for (unsigned bit = 0; bit < 6; ++bit) {
     uint8_t mask = bit == 5 ? 16 : bit == 3 ? 1 : bit == 4 ? 2 : 0;
     const lv_image_dsc_t *frame = NULL;
@@ -221,14 +221,27 @@ static void verify_engine_pixels(void) {
     frame =
         vehicle_3d_frame(test_clock += 50, false, 0, mask, 63, 63, 1u << bit);
     unsigned changed = 0;
-    for (unsigned i = 0; i < 192 * 104; ++i)
+    for (unsigned i = 0; i < VEHICLE_3D_WIDTH * VEHICLE_3D_HEIGHT; ++i)
       changed += before[i] != ((const uint16_t *)frame->data)[i];
     printf("Runtime model lamp bit%u changed %u pixels\n", bit, changed);
     assert(changed > 0);
+    frame = vehicle_3d_frame(test_clock += 50, false, 0, mask, 63, 0, 0);
+    memcpy(before, frame->data, sizeof(before));
     frame = vehicle_3d_frame(test_clock += 50, false, 0, mask, 63, 0, 63);
     assert(!memcmp(before, frame->data,
-                   sizeof(before))); /* invalid cannot illuminate */
+                   sizeof(before))); /* invalid on bits cannot illuminate;
+                                        unknown may be muted */
   }
+}
+static void verify_fullscreen(const ui_view_state_t *s) {
+  const lv_image_dsc_t *frame =
+      vehicle_3d_frame(s->now_ms, s->boot, s->boot_progress,
+                       s->boot ? s->reading.closure_open : s->doors.open,
+                       s->boot ? s->reading.closure_known : s->doors.known,
+                       s->reading.lights_valid, s->reading.lights_on);
+  assert(frame && frame->header.w == 320 && frame->header.h == 172);
+  assert(memcmp(pixels, frame->data, sizeof(pixels)) ==
+         0); /* no labels/icons/gauges */
 }
 static void verify_vehicle(const char *dir) {
   ui_view_state_t s = {.nav = {UI_ENGINE, 0},
@@ -241,7 +254,7 @@ static void verify_vehicle(const char *dir) {
   assert(ui_view_vehicle_ready());
   s.boot = true;
   uint32_t phase_hashes[7] = {0};
-  const float phases[] = {0.0f, 0.12f, 0.3f, 0.5f, 0.7f, 0.9f, 0.97f};
+  const float phases[] = {0.0f, 0.18f, 0.4f, 0.56f, 0.72f, 0.85f, 0.98f};
   for (unsigned i = 0; i < sizeof(phases) / sizeof(phases[0]); ++i) {
     s.now_ms = (test_clock += 50);
     s.boot_progress = phases[i];
@@ -249,6 +262,7 @@ static void verify_vehicle(const char *dir) {
     char name[40];
     snprintf(name, sizeof(name), "runtime-boot-%02u", i);
     capture(dir, name, &s);
+    verify_fullscreen(&s);
     uint32_t hash = 2166136261u;
     for (unsigned px = 0; px < 320 * 172; ++px)
       hash = (hash ^ pixels[px]) * 16777619u;
@@ -264,6 +278,7 @@ static void verify_vehicle(const char *dir) {
     s.doors.open = mask;
     s.now_ms = (test_clock += 50);
     equivalent(&s, false);
+    verify_fullscreen(&s);
   }
   s.doors.open = 1;
   s.doors.known = 0;
@@ -291,6 +306,7 @@ static void verify_vehicle(const char *dir) {
   s.nav.screen = UI_VEHICLE;
   s.doors = (ui_door_state_t){.known = 63};
   capture(dir, "runtime-vehicle-ready", &s);
+  verify_fullscreen(&s);
   s.maintenance = true;
   capture(dir, "runtime-vehicle-paused", &s);
   s.maintenance = false;

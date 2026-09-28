@@ -19,6 +19,7 @@ static const lv_image_dsc_t *last_vehicle_asset;
 static bool vehicle_ready, vehicle_running;
 static uint32_t last_vehicle_generation;
 static ui_vehicle_closing_t closing;
+static ui_screen_t closing_page = (ui_screen_t)99;
 static lv_obj_t *rows[3], *selection, *qr_frame, *qr, *topline, *bottomline;
 static ui_screen_t last_screen = (ui_screen_t)99;
 static unsigned last_item = 99;
@@ -160,8 +161,10 @@ void ui_view_render(const ui_view_state_t *input) {
   bool closure_allowed =
       !input->maintenance && !input->writing && !input->offer && !input->boot &&
       (input->nav.screen == UI_ENGINE || input->nav.screen == UI_SHIFT);
-  if (last_screen != input->nav.screen)
+  if (closing_page != input->nav.screen) {
     closing = (ui_vehicle_closing_t){0};
+    closing_page = input->nav.screen;
+  }
   if (ui_vehicle_closing_step(&closing, input->now_ms, closure_allowed,
                               input->doors.visible, input->doors.open,
                               input->doors.known))
@@ -190,8 +193,10 @@ void ui_view_render(const ui_view_state_t *input) {
   if (asset &&
       (!asset->data || asset->header.magic != LV_IMAGE_HEADER_MAGIC ||
        asset->header.cf != LV_COLOR_FORMAT_RGB565 || asset->header.flags != 0 ||
-       asset->header.w != 192 || asset->header.h != 104 ||
-       asset->header.stride != 384 || asset->data_size != 39936))
+       asset->header.w != VEHICLE_3D_WIDTH ||
+       asset->header.h != VEHICLE_3D_HEIGHT ||
+       asset->header.stride != VEHICLE_3D_WIDTH * 2 ||
+       asset->data_size != VEHICLE_3D_WIDTH * VEHICLE_3D_HEIGHT * 2))
     asset = NULL;
   bool boot = s->boot && asset, has_vehicle = asset != NULL;
   bool drive = s->nav.screen == UI_ENGINE, sport = s->nav.screen == UI_SHIFT;
@@ -203,7 +208,7 @@ void ui_view_render(const ui_view_state_t *input) {
                  qr_layout != use_qr || last_overlay != door ||
                  last_boot != boot || last_vehicle_image != has_vehicle;
   ui_view_state_t graphics_state = *s;
-  if (boot) {
+  if (has_vehicle) {
     graphics_state.nav.screen = UI_SERVICE;
     graphics_state.doors.visible = false;
   }
@@ -216,6 +221,21 @@ void ui_view_render(const ui_view_state_t *input) {
   if (asset && last_vehicle_generation != vehicle_3d_generation()) {
     lv_obj_invalidate(vehicle_image);
     last_vehicle_generation = vehicle_3d_generation();
+  }
+  if (has_vehicle) {
+    /* A successful 3D scene is the whole display: no status or UI overlays. */
+    lv_obj_t *hidden[] = {title,      badge,     body,     bar,
+                          footer,     value,     unit,     provenance,
+                          gear_value, gear_unit, rpm_unit, coolant,
+                          oil,        selection, qr_frame, topline,
+                          bottomline, rows[0],   rows[1],  rows[2]};
+    for (unsigned i = 0; i < sizeof(hidden) / sizeof(hidden[0]); ++i)
+      show(hidden[i], false);
+    lv_anim_delete(rows[1], slide);
+    lv_obj_set_pos(vehicle_image, 0, 0);
+    /* Force a complete layout restore when leaving the fullscreen scene. */
+    last_screen = (ui_screen_t)99;
+    return;
   }
   if (changed) {
     lv_anim_delete(rows[1], slide);
